@@ -110,7 +110,7 @@ with the Network Server without the need for join messages.
 LoRaWAN has several different classes of end-point devices to address the
 different needs reflected in the wide range of applications:
 
-Bi-directional end-devices (Class A): End-devices of Class A allow for
+Bi-directional end-devices **(Class A)**: End-devices of Class A allow for
 bi-directional communications whereby each end-device's uplink transmission is
 followed by two short downlink receive windows. The transmission slot scheduled
 by the end-device is based on its own communication needs with a small variation
@@ -120,13 +120,13 @@ communication from the server shortly after the end-device has sent an uplink
 transmission. Downlink communications from the server at any other time will
 have to wait until the next scheduled uplink.
 
-Bi-directional end-devices with scheduled receive slots (Class B): In addition
+Bi-directional end-devices with scheduled receive slots **(Class B)**: In addition
 to the Class A random receive windows, Class B devices open extra receive
 windows at scheduled times. In order for the End-device to open its receive
 window at the scheduled time it receives a time synchronized Beacon from the
 gateway. This allows the server to know when the end-device is listening.
 
-Bi-directional end-devices with maximal receive slots (Class C): End-devices of
+Bi-directional end-devices with maximal receive slots **(Class C)**: End-devices of
 Class C have nearly continuously open receive windows, only closed when
 transmitting.
 
@@ -135,64 +135,53 @@ transmitting.
 
 # Glossary
 
-ADR: Adaptive Data Rate
+**ADR**: Adaptive Data Rate
 
-API: Application Programming Interface
+**API**: Application Programming Interface
 
-Application Key (AppSKey): The optional 128-bit key used to encrypt the payload
+**Application Key (AppSKey)**: The optional 128-bit key used to encrypt the payload
 of the messages.
 
-Application Server (AS) Routing Profile: The routing information defining how
+**Application Server (AS) Routing Profile**: The routing information defining how
 sensor data is routed to an application back-end connected to the core network
 platform.
 
-Long Range Receiver (LRR) Base Station: The equipment implementing one or more
+**Long Range Receiver (LRR) Base Station**: The equipment implementing one or more
 radio transceivers complying with the LoRaWAN network PHY and MAC layer
 specification. The LRR operates under the control of the LRC.
 
-Connectivity Plan: The connectivity plan defines the networking features (e.g. confirmed
+**Connectivity Plan**: The connectivity plan defines the networking features (e.g. confirmed
 messages, downlink traffic), the traffic policy parameters (token bucket
 regulators for uplink and downlink traffic) and the associated activation
 and recurring fee associated to a given device.
 
-Device An appliance identified by its globally unique IEEE EUI-64 identifier that is
+**Device**: An appliance identified by its globally unique IEEE EUI-64 identifier that is
 able to initiate uplink traffic to, or receive downlink traffic from, one or
 more Application Server through the LPWA network infrastructure.
 
-EUI ID A globally unique 64 bit identifier assigned according to the IEEE EUI-64
+**EUI ID**: A globally unique 64 bit identifier assigned according to the IEEE EUI-64
 guidelines.
-GUI Graphical User Interface
 
-LoRa Long Range and low energy radio RF technology developed by Semtech.
-LoRa® is a registered trademark by Semtech Corporation.
+**Long Range Controller (LRC)**: The LPWA core network component implementing the cloud based MAC
+layer and acting as a mediation function between connected devices and Application Servers.
 
-Long Range Controller (LRC):
-The LPWA core network component implementing the cloud based MAC
-layer and acting as a mediation function between connected devices and
-Application Servers.
-
-Network Key (NwkSKey):
-The 128-bit key used by the LPWA network to verify the authenticity and
+**Network Key (NwkSKey)**: The 128-bit key used by the LPWA network to verify the authenticity and
 integrity of each message transmitted through the system.
 
-NOC Network Operation Center
+**NOC**: Network Operation Center
 
-OSS: Operations Support System
+**OSS**: Operations Support System
 
-SNR: Signal to Noise Ratio
+**SNR**: Signal to Noise Ratio
 
-LPWAN: Low Power Wide Area networks
+**LPWAN**: Low Power Wide Area networks
 
-TDoA Time Difference on Arrival is a wireless location technology that relies on
-sensitive receivers that are typically located at basestations to determine
-the location of a device.
-
-MAC layer: Medium access control or media access control (MAC) layer is the lower
+**MAC layer**: Medium access control or media access control (MAC) layer is the lower
 sublayer of the data link layer (layer 2) of the seven-layer OSI model.
 ISM band: Industrial, Scientific and Medical usages dedicated licence-free frequency
 spectrum.
 
-MQTT: ISO standard (ISO/IEC PRF 20922) publish-suscribe based "light weight"
+**MQTT**: ISO standard (ISO/IEC PRF 20922) publish-suscribe based "light weight"
 messaging protocol for use on top of the TCP/IP protocol.
 
 

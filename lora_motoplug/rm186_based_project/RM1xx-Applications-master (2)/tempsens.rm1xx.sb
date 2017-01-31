@@ -1,0 +1,92 @@
+//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//
+// This app outputs the reading from the DVK temperature sensor (Texas 
+// Instruments LM20) to the UART console using a simple approximation of the 
+// linear transfer function described in the datasheet for the LM20 optimized 
+// for -40°C to +85°C.
+//
+// Vo = -11.67 mV/°C * T + +1.8583V  with a deviation of +/-0.65°C
+//
+// The 10-bit ADC with 2/3 scaling will vary between 0 (GND) and 1024 (1.8VDC) 
+// giving us a range of 5°C to 158°C. 
+//             rc=GpioSetFunc(TEMP_SENS_PIN,3,0)
+//             rc = GpioRead(TEMP_SENS_PIN)
+//             tempC = ((19028992-18000*rc)/119706)
+//
+// The 10-bit ADC with 1/3 scaling will vary between 0 (GND) and 1024 (3.6VDC) 
+// giving us a range of -148°C to 158°C. 
+//             rc=GpioSetFunc(TEMP_SENS_PIN,3,0x13)
+//             rc = GpioRead(TEMP_SENS_PIN)
+//             tempC = ((19028992-36000*rc)/119706)
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Convention : (1) Case sensitive, and commands are presented in alphabetic order
+//              (2) If line ends with \ then it continues on next line. That does
+//                  not mean that it should be sent as multiple lines
+//              (3) Replace anything between ## 
+//              (4) #INTaaaa# means a number in decimal, hex, octal or binary
+//                      format -> 23 == 0x17 == h'17 == o'23 == b'10111
+//                      aaaa is just a description
+//              (5) #HEXaaaa# means a string without delimitors consisting of hex 
+//                      characters only aaaa is just a description
+//              (6) #STRaaaa# means a string without delimitors
+//                      aaaa is just a description
+//              (7) "STRaaaa" means a string which must have the " delimitor
+//                      aaaa is just a description
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//******************************************************************************
+
+
+#define TEMP_SENS_PIN 5
+
+dim rc
+dim tempC
+
+function HandlerTimer0()
+// Just return 0 so we pass through the next waitevent
+endfunc 0
+
+// Sleep for ms milliseconds
+sub Sleep(ms)
+// Start Timer 0 as a one-shot timer
+    TIMERSTART(0,ms,0)
+endsub
+
+onevent EVTMR0 call HandlerTimer0
+
+rc=0
+//-------------------------------------------------------------
+// Configure the Temperature Sensor pin as an ANALOG INPUT
+//-------------------------------------------------------------
+rc=GpioSetFunc(TEMP_SENS_PIN,3,0x13)
+
+while 1
+    rc = GpioRead(TEMP_SENS_PIN)
+    tempC = ((19028992-36000*rc)/119706)
+    print tempC;"*C\n"
+    sleep(500)
+    waitevent
+endwhile
+    

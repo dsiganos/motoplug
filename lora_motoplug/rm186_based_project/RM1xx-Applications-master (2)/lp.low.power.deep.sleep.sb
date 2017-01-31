@@ -1,0 +1,61 @@
+'//******************************************************************************
+'// Laird Technologies (c) 2013
+'//
+'// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'// +++++                                                                      ++
+'// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+'// +++++  which consists of all characters up to the first . and excluding it ++
+'// +++++                                                                      ++
+'// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'//
+'//
+'// This small program configures the development board for minimal
+'// power consumption by setting SIO_6 as digital out, closing the UART, 
+'// putting the LoRa radio to sleep, and finally putting the BLE radio to sleep.
+'//
+'// After running this application you should see ~750nA at the current measurement
+'// header pins J11 pins 1-2. Remove the jumper and place an ammeter in series.
+'//
+'// gpiosetfunc(SIO,function,sub function)
+'//
+'//******************************************************************************
+
+'//******************************************************************************
+'// Definitions
+'//******************************************************************************
+
+'//******************************************************************************
+'// Library Import
+'//******************************************************************************
+
+'//******************************************************************************
+'// Global Variable Declarations
+'//******************************************************************************
+
+dim rc          '// Declare rc as a variable (result code)
+
+'//******************************************************************************
+'// Function and Subroutine definitions
+'//******************************************************************************
+
+'//******************************************************************************
+'// Handler definitions
+'//******************************************************************************
+
+'//******************************************************************************
+'// Equivalent to main() in C
+'//******************************************************************************
+
+rc = gpiosetfunc(6,2,0) '//Sets SIO_6 as a digital output set low to keep LED 5 OFF
+uartclose()     '// Closes the UART
+
+rc = LoraMacSleepMode()
+
+'//put module into deep sleep
+rc = SystemStateSet(0)
+
+'//------------------------------------------------------------------------------
+'// Wait for a synchronous event.
+'// An application can have multiple <WaitEvent> statements
+'//------------------------------------------------------------------------------
+waitevent       '// Waits for an event to happen

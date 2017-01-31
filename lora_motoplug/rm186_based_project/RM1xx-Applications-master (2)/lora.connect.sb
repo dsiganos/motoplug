@@ -1,0 +1,228 @@
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+        // size of i[]
+#define NUM_OF_I_PARAMS                     (8)
+        // size of s$[] and must be at least 8 elements for BleSvcRegDevInfo()     
+#define NUM_OF_S_PARAMS                     (8)
+
+Dim rc
+Dim data$
+Dim Temperature
+Dim Pressure
+Dim Battery
+dim tlen,tkn$
+dim i[NUM_OF_I_PARAMS]      // index 0 used for return values
+dim s$[NUM_OF_S_PARAMS]    // must be at least 8 elements for BleSvcRegDevInfo()
+dim urtcmd$                 //cmd line from uart
+dim urts
+dim stRsp$
+dim str$
+DIM strT$
+DIM nJoinType
+
+SUB PrintMsg(str$)
+	print "\n";str$
+ENDSUB 
+
+
+//==============================================================================
+//-------------------------------------------------------------------------
+function ExtractIntTokens(u$,stIdx,num)
+  while num>0
+    tlen = ExtractIntToken(u$,i[stIdx])
+    if tlen == 0 then
+      exitfunc 4
+    endif
+    num=num-1
+    stIdx = stIdx+1
+  endwhile
+endfunc 0
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+function ExtractStrTokens(u$,stIdx,num)
+  while num>0
+    tlen = ExtractStrToken(u$,s$[stIdx])
+    if tlen == 0 then
+      exitfunc 3
+    endif
+    num=num-1
+    stIdx = stIdx+1
+  endwhile
+endfunc 0
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+FUNCTION HandlerTimer0()
+	Battery = Battery + 1
+	if Battery == 256 then
+		Battery = 0
+	endif
+	Temperature = Temperature + 1
+	if Temperature == 256 then
+		Temperature = 0
+	endif
+	Pressure = Pressure + 1
+	if Pressure == 256 then
+		Pressure = 0
+	endif
+	rc=StrSetChr(data$,Pressure,2)
+	rc=StrSetChr(data$,Battery,7)
+	rc=StrSetChr(data$,Temperature,4)
+
+	rc = LORAMACTxData(2,data$, 1)
+ENDFUNC 1
+
+FUNCTION LoramacJoining() As Integer
+ 	strT$ = "Joining"
+ 	PrintMsg(strT$)
+endfunc 1
+
+FUNCTION LoramacJoined() As Integer
+	strT$ = "Joined"
+ 	PrintMsg(strT$)
+	TimerStart(0,10000,0) 
+endfunc 1
+
+FUNCTION LoramacJoinFailed() As Integer
+	rc = LORAMACJoin(nJoinType)
+ 	strT$ = "Join Failed"
+ 	PrintMsg(strT$)
+endfunc 1
+
+FUNCTION LoramacTxComplete() As Integer
+ 	strT$ = "Tx sequence completed "
+ 	PrintMsg(strT$)
+	TimerStart(0,25000,0)  			
+endfunc 1
+
+FUNCTION LoramacRxTimeout() As Integer
+ 	strT$ = "Rx Timeout"
+	print strT$
+	rc = LORAMACJoin(nJoinType)
+endfunc 1
+
+FUNCTION LoramacTxTimeout() As Integer
+	DIM strT$
+ 	strT$ = "Tx Timeout"
+	print strT$
+	TimerStart(0,10000,0)
+endfunc 1
+
+//-------------------------------------------------------------------------
+//#CMD#// lora get param$  #INTvalue# 
+//#CMD#// lora set param$  #INTvalue# 
+//-------------------------------------------------------------------------
+function _Lora()
+  dim prAdr$ 
+	dim val
+	dim res
+	dim reg
+	dim stringVal$
+	dim tkn$
+
+  tlen = ExtractStrToken(urtcmd$,tkn$)
+  if tlen == 0 then
+    exitfunc 5
+  endif
+
+  if strcmp(tkn$,"get")==0 then
+		rc = ExtractIntToken(urtcmd$,reg)
+		rc = LORAMACGetOption(reg, stringVal$)
+		print stringVal$;"\n"
+		exitfunc 0
+	endif
+	
+  if strcmp(tkn$,"set")==0 then
+		rc = ExtractIntToken(urtcmd$,reg)
+		tlen = ExtractStrToken(urtcmd$,tkn$)
+		if tlen != 0 then
+			rc = LORAMACSetOption(reg, tkn$)
+			print "\n";reg;" ";tkn$
+		endif
+		exitfunc 0
+	endif
+	
+ endfunc 5
+
+//==============================================================================
+//==============================================================================
+function OnUartCmd() as integer
+  rc=1 //assume there is an error
+  tlen = ExtractStrToken(urtcmd$,tkn$) //get first token
+  if tlen == 0 then
+    rc=0
+  elseif tlen > 0 then
+    
+    if strcmp(tkn$,"lora")==0 then
+      rc = _Lora()
+      
+    elseif (strcmp(tkn$,"exit")==0)||(strcmp(tkn$,"stop")==0) then
+      print "\nType..\nRESUME          to continue the application"
+      print "\n? VARNAME       to inspect a variable"    
+      print "\n= VARNAME VALUE to change a variable"    
+      stop 
+      rc=0
+    
+    endif
+  endif
+endfunc 1
+
+
+//==============================================================================
+//==============================================================================
+function HandlerUartRxCmd() as integer
+  dim nMatch
+  
+  if urts < 0 then
+    //uart parser is suspended
+    exitfunc 1
+  endif
+
+  //check if CR has been received
+  nMatch=UartReadMatch(stRsp$,13)
+  if nMatch!=0 then
+    //CR exists in the input buffer
+    urtcmd$ = strsplitleft$(stRsp$,nMatch)
+    exitfunc OnUartCmd()
+  endif
+endfunc 1
+
+ONEVENT EVLORAMACJOINING	CALL LoramacJoining
+ONEVENT EVLORAMACJOINED	CALL LoramacJoined
+ONEVENT EVLORAMACJOINFAILED	CALL LoramacJoinFailed
+ONEVENT EVLORAMACTXCOMPLETE	CALL LoramacTxComplete
+ONEVENT EVLORAMACRXTIMEOUT CALL LoramacRxTimeout
+ONEVENT EVLORAMACTXTIMEOUT CALL LoramacTxTimeout
+ONEVENT EVTMR0			CALL HandlerTimer0
+ONEVENT EVUARTRX CALL HandlerUartRxCmd
+
+data$ = "\00\00\00\07\00\00\80\00\00\00\00\00\00\00\00\85"
+Battery = 0xA8
+Temperature = 0xD0
+Pressure = 0x30
+rc=StrSetChr(data$,Pressure,2)
+rc=StrSetChr(data$,Battery,7)
+rc=StrSetChr(data$,Temperature,4)
+
+//nJoinType = 0 // personalisation
+nJoinType = 1 // OTA
+
+rc = LORAMACJoin(nJoinType)
+
+WAITEVENT
+
+

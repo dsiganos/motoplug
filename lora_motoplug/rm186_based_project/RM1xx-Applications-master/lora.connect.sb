@@ -1,0 +1,83 @@
+#define ADC_PIN 6
+
+
+Dim rc
+Dim data$
+Dim Battery
+dim Batterydiv
+dim Batterymod
+dim str$
+DIM strT$
+dim i
+
+SUB PrintMsg(str$)
+	print "\n";str$
+ENDSUB 
+
+FUNCTION HandlerTimer0()
+    SPRINT #Data$,"voltage is and this is very important:",integer.d' Batterydiv
+	rc = LORAMACTxData(177,Data$, 0)
+    print Batterydiv; "."; Batterymod; " V\n"
+    print "data read. Gave them to  transit function frame count is ";i; "\n"
+    i = i + 1
+ENDFUNC 1
+
+FUNCTION LoramacJoining() As Integer
+ 	strT$ = "Joining\n"
+ 	PrintMsg(strT$)
+endfunc 1
+
+FUNCTION LoramacJoined() As Integer
+	strT$ = "Joined\n"
+ 	PrintMsg(strT$)
+	TimerStart(0,10000,0) 
+endfunc 0
+
+FUNCTION LoramacJoinFailed() As Integer
+	rc = LORAMACJoin(1)
+ 	strT$ = "Join Failed\n"
+ 	PrintMsg(strT$)
+endfunc 0
+
+FUNCTION LoramacTxComplete() As Integer
+    print "data has been sent\n"
+	TimerStart(0,25000,0)
+endfunc 0
+
+FUNCTION LoramacRxTimeout() As Integer
+ 	strT$ = "Rx Timeout\n"
+	print strT$
+	rc = LORAMACJoin(1)
+endfunc 0
+
+FUNCTION LoramacTxTimeout() As Integer
+	DIM strT$
+ 	strT$ = "Tx Timeout\n"
+	print strT$
+	TimerStart(0,10000,0)
+endfunc 0
+
+ONEVENT EVLORAMACJOINING	CALL LoramacJoining
+ONEVENT EVLORAMACJOINED	CALL LoramacJoined
+ONEVENT EVLORAMACJOINFAILED	CALL LoramacJoinFailed
+ONEVENT EVLORAMACTXCOMPLETE	CALL LoramacTxComplete
+ONEVENT EVLORAMACRXTIMEOUT CALL LoramacRxTimeout
+ONEVENT EVLORAMACTXTIMEOUT CALL LoramacTxTimeout
+ONEVENT EVTMR0			CALL HandlerTimer0
+
+rc = LORAMACJoin(1)
+rc=GpioSetFunc(ADC_PIN,3,0x13)
+i = 1
+
+while 1
+    rc = GpioRead(ADC_PIN)
+    battery = (rc*3600)/1024*10
+    battery = battery *1367
+    batterydiv = battery/10000
+    batterymod = battery%10000
+
+//    data$ = "\00\00\00\07\00\00\80\00\00\00\00\00\00\00\00\85"
+//    rc=StrSetChr(data$,Batterydiv,7)
+    timerstart(0,60000,0)
+    WAITEVENT
+endwhile

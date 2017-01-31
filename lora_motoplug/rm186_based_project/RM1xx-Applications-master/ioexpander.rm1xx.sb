@@ -1,0 +1,144 @@
+//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//
+// This app monitors the I/O Expander pin 4 that is connected to a push button
+// on the DVK. When the button is pressed, the I/O line is grounded causing the
+// application to strobe the LEDs connected to pins 0-3 on the I/O Expander.
+//
+// The I/O Expander is a Microchip MCP23S08 SPI device. The register map is 
+// below for reference. The datasheet for this device explains all registers 
+// in detail.
+//
+//  Name        Addr
+//  IODIR       0x00 
+//  IPOL        0x01 
+//  GPINTEN     0x02 
+//  DEFVAL      0x03 
+//  INTCON      0x04 
+//  IOCON       0x05 
+//  GPPU        0x06 
+//  INTF        0x07 
+//  INTCAP      0x08 
+//  GPIO        0x09 
+//  OLAT        0x0A 
+//
+//******************************************************************************
+
+#define SPI_CS_PIN  4 //SIO4 is connected to the CS line via J18
+
+dim rc
+dim handle
+dim wr$
+dim rd$
+
+function HandlerTimer0()
+// Just return 0 so we pass through the next waitevent
+endfunc 0
+
+// Sleep for ms milliseconds
+sub Sleep(ms)
+// Start Timer 0 as a one-shot timer
+    TIMERSTART(0,ms,0)
+    waitevent
+endsub
+
+onevent EVTMR0 call HandlerTimer0
+
+rc=0
+//-------------------------------------------------------------
+// Configure the Chip Select line
+//-------------------------------------------------------------
+rc=GpioSetFunc(SPI_CS_PIN,2,1)
+
+// ensure CS is not enabled
+GpioWrite(SPI_CS_PIN,1)
+
+//-------------------------------------------------------------
+//open the SPI interface
+//  Mode CPOL CPHA
+//    0   0   0
+//    1   0   1
+//    2   1   0
+//    3   1   1
+//-------------------------------------------------------------
+rc=SpiOpen(0,125000,0,handle)
+// Read op-code
+// 0x41
+// Write op-code
+// 0x40
+// 
+// Configure Inputs/Outputs by writing 0x10 to register 0x00
+// IO7  IO6  IO5 IO4  IO3  IO2  IO1  IO0   // MCP23S08 pin
+// n/a  n/a  n/a BUTN LED4 LED3 LED2 LED1  // RM1xx DVK pin
+//  0    0    0   1    0    0    0    0    // 0=output 1=input
+// I/O Direction (IODIR) Register 0x00
+wr$="\40\00\10"
+GpioWrite(SPI_CS_PIN,0)
+rc=SpiWrite(wr$)
+GpioWrite(SPI_CS_PIN,1)
+// Enable a weak pull-up on the push button (GPPU 0x06)
+wr$="\40\06\10"
+GpioWrite(SPI_CS_PIN,0)
+rc=SpiWrite(wr$)
+GpioWrite(SPI_CS_PIN,1)
+
+
+sub setLEDs(val)
+    GpioWrite(SPI_CS_PIN,0)
+    // Write (opcode 0x40) PORT/GPIO Register (0x09)
+    wr$="\40\09"
+    // Add the value that was passed in to the SPI command
+    rc=strsetchr(wr$,val,2)
+    rc=SpiWrite(wr$)
+    GpioWrite(SPI_CS_PIN,1)
+endsub
+
+sub strobeLEDs()
+    setLEDs(1) //LED0
+    sleep(200)
+    setLEDs(2) //LED1
+    sleep(200)
+    setLEDs(4) //LED2
+    sleep(200)
+    setLEDs(8) //LED3
+    sleep(200)
+    setLEDs(0) //All off
+endsub
+
+print "Press SW1/Button1 on the DVK to flash the LEDs\n"
+do
+// Read (opcode 0x41) PORT/GPIO Register (0x09)
+    wr$="\41\09\00"
+    GpioWrite(SPI_CS_PIN,0)
+    rc=SpiReadWrite(wr$,rd$)
+    GpioWrite(SPI_CS_PIN,1)
+    // The GPIO pin status comes back in the 3rd byte
+    rc=StrGetChr(rd$,2)
+    // Check if IO4 is grounded
+    if ((rc&0x10)==0) then
+        // the push button has been pressed
+        strobeLEDs()
+        sleep(10)
+    endif
+dowhile 1

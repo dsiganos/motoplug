@@ -1,0 +1,91 @@
+ //******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+ //
+ // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ // +++++                                                                      ++
+ // +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+ // +++++  which consists of all characters up to the first . and excluding it ++
+ // +++++                                                                      ++
+ // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ //
+ // RM1xx I2C GPS application
+ //
+ //******************************************************************************
+
+//Connect to the I2C-GPS NAV unit and retrieve GPS data from the NEO6 GPS receiver
+
+#include "regdef.gps.neo6.i2c.sb"
+
+dim rc 			//Result code
+dim I2CHndl 	//I2C Handle
+dim nSlaveAddr  //I2C address for the slave device
+dim nRegAddr	//Temporary variable for I2C register address
+dim nRegVal		//Temporary variable for I2C register value	
+
+'//******************************************************************************
+'// Command success handler
+'//******************************************************************************
+SUB AssertRC(rc,ln)
+    IF rc!=0 THEN
+        PRINT "\nFail :";integer.h' rc;" at tag ";ln
+    ENDIF
+ENDSUB
+
+nSlaveAddr = 0x20
+
+//Open I2C connection
+rc=I2cOpen(100000, 0, I2CHndl)
+IF rc!= 0 THEN
+PRINT "\nFailed to open I2C interface with error code "; INTEGER.H' rc
+ELSE
+PRINT "\nI2C open success\n"
+ENDIF
+
+//Read the hardware version
+nRegAddr = I2C_GPS_REG_VERSION
+rc = I2cReadReg8(nSlaveAddr, nRegAddr, nRegVal)
+IF rc!= 0 THEN
+PRINT "\nFailed to Read from slave/register "; INTEGER.H'rc;"\n"
+ELSE
+PRINT "Version = ";nRegVal;"\n"	
+ENDIF
+
+//Read the status register
+nRegAddr = I2C_GPS_STATUS_00
+rc = I2cReadReg8(nSlaveAddr, nRegAddr, nRegVal)
+IF rc!= 0 THEN
+PRINT "\nFailed to Read from slave/register "; INTEGER.H'rc;"\n"
+ELSE
+PRINT "Status = ";nRegVal;"\n"	
+ENDIF
+
+//Read the current location
+nRegAddr = I2C_GPS_LOCATION
+rc = I2cReadReg32(nSlaveAddr, nRegAddr, nRegVal)
+IF rc!= 0 THEN
+PRINT "\nFailed to Read from slave/register "; INTEGER.H'rc;"\n"
+ELSE
+PRINT "Latitude = ";nRegVal;"\n"	
+ENDIF
+rc = I2cReadReg32(nSlaveAddr, nRegAddr+4, nRegVal)
+IF rc!= 0 THEN
+PRINT "\nFailed to Read from slave/register "; INTEGER.H'rc;"\n"
+ELSE
+PRINT "Longitude = ";nRegVal;"\n"	
+ENDIF
+//Close I2C connection
+I2cClose(I2CHndl)

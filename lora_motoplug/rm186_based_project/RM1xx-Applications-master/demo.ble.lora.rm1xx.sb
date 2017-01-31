@@ -1,0 +1,806 @@
+//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+//******************************************************************************
+//Join the LoRa network with these credentials:
+// at+deveui "0123456789abcdef"
+// at+cfgex 1000 "dd9c860da9467770"
+// at+cfgex 1002 "9f20a1ef958d8628cd83cb66ee9e617a"
+
+//License board #4 for BLE
+// AT+LIC "85F28E578FEFB62DC8AA"
+
+//******************************************************************************
+// Definitions
+//******************************************************************************
+#include "RM1xx-defs.h"
+#include "lib/ble.sblib"
+
+        //Set this to 0 to disable all debugging messages
+#define ENABLE_DEBUG_PRINTS                  1
+        // Number of characteristics
+#define NUM_OF_CHARS                         8
+        // size of i[]
+#define NUM_OF_I_PARAMS                     (8)
+        // size of s$[] and must be at least 8 elements for BleSvcRegDevInfo()     
+#define NUM_OF_S_PARAMS                     (8)
+        //Number of advert reports
+#define NUM_OF_ADV                          (4)
+        // Number of connections
+#define NUM_OF_CONNS                         1
+        // Number of services
+#define NUM_OF_SVCS                          4
+
+#define BLE_CONNECTED						((1)<<0)
+#define LORA_CONNECTED						((1)<<1)
+#define LORA_WAITING_FOR_ACK				((1)<<2)
+
+#define TI_SENSORTAG_SENSOR                 1
+#define BL600_TEMP_SENSOR                   2
+
+//******************************************************************************
+// Register Error Handler as early as possible
+//******************************************************************************
+sub HandlerOnErr()
+  print "\n OnErr - ";GetLastError();"\n"
+endsub
+onerror next HandlerOnErr
+
+//******************************************************************************
+// Debugging resource as early as possible
+//******************************************************************************
+
+//==============================================================================
+//==============================================================================
+sub AssertResCode(byval rc as integer,byval tag as integer)
+  if rc!=0 then
+    print "\nFailed with ";integer.h' rc;" at tag ";tag
+  endif
+endsub
+
+//==============================================================================
+//==============================================================================
+sub DbgMsgVal(byval msg$ as string, byval vl as integer)
+  if (ENABLE_DEBUG_PRINTS!=0) then
+    print "\n";msg$;" ";vl
+  endif
+endsub
+
+//==============================================================================
+//==============================================================================
+sub DbgMsg(byval msg$ as string)
+  if (ENABLE_DEBUG_PRINTS!=0) then
+    print "\n";msg$
+  endif
+endsub
+
+//******************************************************************************
+// Library Import
+//******************************************************************************
+
+//******************************************************************************
+// Debugging resource after libs
+//******************************************************************************
+
+//******************************************************************************
+// Global Variable Declarations
+//******************************************************************************
+
+dim rc
+dim looprc
+dim stRsp$ as string        //Uart rx data is stored here
+
+dim ok$,er$,pr$
+
+dim i[NUM_OF_I_PARAMS]      // index 0 used for return values
+dim s$[NUM_OF_S_PARAMS]    // must be at least 8 elements for BleSvcRegDevInfo()
+dim urts                    //will be <0 if uart parser suspended
+
+dim adv$[NUM_OF_ADV]        //advert reports
+dim handle
+dim conHndl
+dim sensorType
+dim linkCheckLoop			// Loop sending Link Check Request messages for debugging
+
+dim PrevAds$[8] //Previous adverts (size of 8 adverts)
+dim PrevAdCount : PrevAdCount = 0 //Number of previous adverts
+
+dim hc[NUM_OF_CONNS+1]      //contains connection handles
+dim conns                   //number of connections
+dim hcVsp                   //handle of connection to use for VSP service
+
+dim gcState                 // gatt client state, 0=IDLE, 1=TableMapping
+
+dim lumoLast$				// Most recent reading from the Luminosity sensor
+
+dim status
+
+dim uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
+dim uHndl
+dim tempHVal
+
+//******************************************************************************
+// Initialisse Global Variable
+//******************************************************************************
+
+ok$    = "\nOK"
+er$    = "\nERROR "
+pr$    = "\r\n>"
+
+urts=0 //not suspended
+handle=0
+
+//******************************************************************************
+// Function and Subroutine definitions
+//******************************************************************************
+//==============================================================================
+//release all connection handles
+//==============================================================================
+sub InitConnHandles()
+  dim z
+  for z=0 to (NUM_OF_CONNS)
+    hc[z]=-1
+  next
+endsub
+//==============================================================================
+//==============================================================================
+function AcqConnHandle(hConn)
+  dim z
+  for z=1 to (NUM_OF_CONNS)
+    if hc[z] == -1 then
+      hc[z]=hConn
+      exitfunc z
+    endif
+  next
+endfunc 0
+//==============================================================================
+//==============================================================================
+function RelConnHandle(hConn)
+  dim z
+  for z=1 to (NUM_OF_CONNS)
+    if hc[z] == hConn then 
+      hc[z]=-1
+      exitfunc z
+    endif
+  next
+endfunc 0
+//==============================================================================
+//==============================================================================
+sub ShowConnParms(nCtx as integer)
+  dim intrvl,sprvto,slat
+  rc= BleGetCurConnParms(nCtx,intrvl,sprvto,slat)
+  AssertResCode(rc,1240)
+  if rc==0 then
+    DbgMsgVal("Conn Interval",intrvl)
+    DbgMsgVal("Conn Supervision Timeout",sprvto)
+    DbgMsgVal("Conn Slave Latency",slat)
+    DbgMsg("\n")
+  endif
+endsub
+
+//This function removes leading 0s from the front of a string
+FUNCTION RemoveZeros(Data$) AS STRING
+	dim i, Done, TmpStr$ : i = 0 : Done = 0
+	WHILE (i < strlen(Data$))
+		TmpStr$ = MID$(Data$, i, 1)
+		IF (STRCMP(TmpStr$, "0") != 0) THEN
+			//Other number found - cut string to this length and mark as finished
+			TmpStr$ = RIGHT$(Data$, strlen(Data$)-i)
+			i = strlen(Data$)
+			Done = 1
+		ENDIF
+		i = i+1
+	ENDWHILE
+
+	IF (Done == 0) THEN
+		//Other number not found in provided string
+		TmpStr$ = "0"
+	ENDIF
+ENDFUNC TmpStr$
+
+//==============================================================================
+sub UartRsp(rsp as integer)
+  if rsp == 0 then
+    print ok$;pr$
+  elseif rsp > 0 then 
+    print er$;integer.h' rsp;pr$
+  endif
+  urts = rsp
+endsub
+
+//==============================================================================
+//==============================================================================
+function InitiateTableMap(hConn)
+  rc = BleDiscServiceFirst(hConn,0,0)
+  if rc==0 then
+    gcState=1
+    exitfunc -1
+  endif
+endfunc rc
+//==============================================================================
+//==============================================================================
+sub TerminateTableMap(rc)
+  gcState=0
+  if rc==0x6052 then
+    //BLE_GATTC_NO_MORE_DATA
+    rc=0
+  endif
+  UartRsp(rc)
+endsub
+//==============================================================================
+
+//-------------------------------------------------------------------------
+sub UartMsg(msg$)
+  dim rc
+	rc = uartwrite(msg$)
+endsub
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+sub UartDecimalMsg(val)
+  dim rc
+	dim msg$
+	sprint #msg$,val
+	msg$ = "\n"+msg$
+	rc = uartwrite(msg$)
+endsub
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+sub UartHexMsg(val)
+  dim rc
+	dim msg$
+	sprint #msg$,integer.h' val
+	msg$ = "\n"+msg$
+	rc = uartwrite(msg$)
+endsub
+
+//-------------------------------------------------------------------------
+// Start the RM1xx demo once we're connected to BLE device and LoRa network
+//-------------------------------------------------------------------------
+function startDemo()
+   dim reg
+   dim at$
+   dim atHndl
+   
+    select sensorType
+    case TI_SENSORTAG_SENSOR
+        // Configure the Luxometer sensor
+        // Enable notification with "01:00"
+        print"Enable notification.\n"
+        atHndl=66
+        at$="\01\00"
+        rc = BleGattcWrite(hc[1],atHndl,at$)
+        waitevent
+        print"returned = ";rc;"\n"
+        // Enable sensor and start measurements with "01"
+        print"Enable sensor\n"
+        atHndl=68
+        at$="\01"
+        rc = BleGattcWrite(hc[1],atHndl,at$)
+
+    case BL600_TEMP_SENSOR
+        print"Enable notification for BL600.\n"
+		atHndl = 15
+        at$="\01\00"
+        rc = BleGattcWrite(hc[1],atHndl,at$)
+
+	case else
+        DbgMsgVal("Unknown Sensor", sensorType)
+    endselect  
+	
+    waitevent
+	print"returned = ";rc;"\n"
+ endfunc rc
+//==============================================================================
+
+
+
+//******************************************************************************
+// Handler definitions
+//******************************************************************************
+
+//==============================================================================
+// This handler is called when data has arrived at the serial port
+//==============================================================================
+function HandlerUartRxCmd() as integer
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is an advert timeout
+//==============================================================================
+function HandlerBlrAdvTimOut() as integer
+  print "\n\nAdverts timeout"
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is an advert report waiting to be read
+//==============================================================================
+//This handler will be called when an advert report is received
+FUNCTION HandlerAdvRpt()
+    DIM periphAddr$, advData$, nRssi, ADval$, TmpStr$, TmpStr2$, TmpVal
+
+    //Read all cached advert reports
+    looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
+    WHILE (looprc == 0)
+	//Check if this advert was received recently
+	TmpStr$ = periphAddr$ + advData$
+	TmpVal = 0
+	while (TmpVal < PrevAdCount)
+		if (strcmp(TmpStr$, PrevAds$[TmpVal]) == 0) then
+			//Already seen this advert, ignore it
+			TmpVal = 254
+		endif
+		TmpVal = TmpVal+1
+	endwhile
+
+	if (TmpVal != 255) then
+		//Advert not seen before - get device name
+		rc = BLEGETADBYTAG(advData$, 8, TmpStr$)
+		if (rc == 0) then
+			//Name found at index 0x08
+			PRINT TmpStr$;"\n"
+		else
+			//Name not found at index 0x08, check 0x09
+			rc = BLEGETADBYTAG(advData$, 9, TmpStr$)
+			if (rc == 0) then
+				//Name found at index 0x09
+				PRINT TmpStr$;"\n"
+			endif
+		endif
+        
+		if (strcmp(TmpStr$, "CC2650 SensorTag")==0) then
+                sensorType = TI_SENSORTAG_SENSOR
+				//Connect to the SensorTag
+				rc = BleConnectCancel()
+				print "Found the TI SensorTag. Connecting ...\n"
+				rc = BleConnect(periphAddr$, 5000, 7500, 100000, 500000)
+		elseif (strcmp(TmpStr$, "LAIRD BL600")==0) then
+                sensorType = BL600_TEMP_SENSOR
+				//Connect to the BL600 Temp Sensor
+				rc = BleConnectCancel()
+				print "Found the BL600. Connecting ...\n"
+				rc = BleConnect(periphAddr$, 5000, 7500, 100000, 500000)
+		endif
+
+		//Output BT addr and RSSI
+		PRINT strhexize$(periphAddr$);", RSSI: ";nRssi;"\n"
+
+		//Go through all tags and print them out
+		PRINT "Advertising data [hex]:\n"
+		TmpVal = 0
+		while (TmpVal <= 0xff) 
+			if (TmpVal == 8) then
+				//Skip name tags
+				TmpVal = 10
+			endif
+			rc = BLEGETADBYTAG(advData$, TmpVal, TmpStr$)
+			if (rc == 0) then
+				//Output tag
+				TmpStr2$ = ""
+				SPRINT #TmpStr2$,INTEGER.H'TmpVal
+				TmpStr2$ = RemoveZeros(TmpStr2$)
+				PRINT "  Length: ";strlen(TmpStr$);", Type: 0x";TmpStr2$;", Value: ";STRHEXIZE$(TmpStr$);"\n"
+			endif
+			TmpVal = TmpVal+1
+		endwhile
+
+		//Newline
+		PRINT "\n"
+
+		//Check if the array is too large
+		if (PrevAdCount > 6) then
+			//Array too big - clear it
+			TmpVal = 0
+			while (TmpVal < 8)
+				PrevAds$[TmpVal] = ""
+				TmpVal = TmpVal+1
+			endwhile
+			PrevAdCount = 0
+		endif
+
+		//Add this adverts to the recent list
+		TmpStr$ = periphAddr$ + advData$
+		PrevAds$[PrevAdCount] = TmpStr$
+		PrevAdCount = PrevAdCount+1
+	endif
+        looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
+    ENDWHILE
+	
+ENDFUNC 1
+
+//==============================================================================
+//==============================================================================
+function HandlerFindChar(hConn,cProp,hVal,hiUuid) as integer
+  print "\nEVFINDCHAR("
+  print "hConn=";integer.h' hConn;",hIncUuid=";integer.h' hiUuid
+  print ",hVal=";hVal;",Props=";integer.h' cProp;")"
+  tempHVal = hVal
+endfunc 1
+
+
+'//==============================================================================
+'// This handler is called when there is a LoRa TX Complete event
+'//==============================================================================
+function HandlerLoRaTxComp() as integer
+	print "LoRa TX Complete Event\n"
+	if linkCheckLoop>0 then
+		rc=LORAMACLinkCheck()
+	endif
+    status = status&(!LORA_WAITING_FOR_ACK)
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when there is a LoRa RX Complete event
+'//==============================================================================
+function HandlerLoRaRxComp() as integer
+	print "LoRa RX Complete Event\n"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when the LoRa Join procedure starts
+'//==============================================================================
+function HandlerLoRaJoining() as integer
+	print "Attempting to join the LoRa network\n"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when the LoRa Join Process completes successfully
+'//==============================================================================
+function HandlerLoRaJoined() as integer
+  print "Joined the LoRa network\n"
+  status = status+LORA_CONNECTED
+  
+  if status == (LORA_CONNECTED + BLE_CONNECTED) then
+	rc=startDemo()
+  endif
+endfunc 1
+
+
+
+//==============================================================================
+// This handler is called when there is a BLE message
+//==============================================================================
+function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
+  dim hz
+  dim atHandle, at$
+  dim rc,uHndl,sIdx,cIdx,baseUuid$,uHndS$,uHndS,uHndC
+  baseUuid$ = "569a0000b87f490c92cb11ba5ea5167c"
+
+  select nMsgId
+  case BLE_EVBLEMSGID_CONNECT
+    hz = AcqConnHandle(nCtx)
+    conns = conns + 1
+    print "\n --- Connect: (";integer.h' nCtx;") handle=";hz
+    if hz == 0 then
+      //Could not store the handle so drop the connection
+      rc = BleDisconnect(nCtx)
+      print " DROPPED"
+    else
+      //accepted so display connection parameters
+      ShowConnParms(nCtx)
+      //always assume most recent connection for VSP
+      hcVsp = hc[hz]
+    endif
+
+    uHndS$ = StrDehexize$(baseUuid$)
+	uHndS = BleHandleUuid128(uHndS$)
+	uHndC = BleHandleUuidSibling(uHnds,0x2A10)
+	sIdx = 0
+	cIdx = 0 //valHandle will be 32
+	rc = BleGattcFindChar(nCtx,uHndS,sIdx,uHndC,cIdx)
+        
+	status = status+BLE_CONNECTED
+	if status == (LORA_CONNECTED + BLE_CONNECTED) then
+      rc=startDemo()
+	else
+	  // Join the LoRa network
+	  rc=LORAMACJoin(LORAMAC_JOIN_BY_REQUEST)	  
+    endif
+	
+  case BLE_EVBLEMSGID_DISCONNECT
+    hz = RelConnHandle(nCtx)
+    conns = conns - 1
+    print "\n --- Disconnect: (";integer.h' nCtx;") handle=";hz;pr$
+    status = status-BLE_CONNECTED
+	
+  case BLE_EVBLEMSGID_DISPLAY_PASSKEY
+    DbgMsgVal("Display Pairing Passkey ",nCtx)
+
+  case BLE_EVBLEMSGID_NEW_BOND
+    DbgMsg(" +++ New Bond")
+
+  case BLE_EVBLEMSGID_UPDATED_BOND
+    DbgMsg(" +++ Updated Bond")
+
+  case BLE_EVBLEMSGID_ENCRYPTED
+    DbgMsg(" +++ Encrypted Connection")
+
+  case BLE_EVBLEMSGID_CONN_TO_BONDED_MASTER
+    DbgMsgVal(" -- Conn to Bonded Master ",nCtx)
+
+  case BLE_EVBLEMSGID_AUTH_KEY_REQUEST
+    DbgMsgVal(" +++ Auth Key Request, type=",nCtx)
+
+  case BLE_EVBLEMSGID_CONN_PARMS_UPDATE
+    ShowConnParms(nCtx)
+
+  case BLE_EVBLEMSGID_CONN_PARMS_UPDATE_FAIL
+    DbgMsg(" ??? Conn Parm Negotiation FAILED")
+
+  case else
+    DbgMsgVal("Unknown Ble Msg", nMsgId)
+  endselect
+endfunc 1
+
+
+//==============================================================================
+//handler to service button 0 pressed
+//==============================================================================
+FUNCTION HndlrBtn1Pr() AS INTEGER
+	print "button 1 pressed\n"
+    //just exit and stop waiting for events
+ENDFUNC 0
+
+
+//==============================================================================
+//==============================================================================
+function HandlerPrimSvc(hConn,hUuid,hStart,hEnd) as integer
+  select gcState
+  case 0
+    print "\nEVDISCPRIMSVC("
+    print "hConn=";integer.h' hConn;",hUuid=";integer.h' hUuid
+    print ",hStart=";hStart;",hEnd=";hEnd;")"
+    
+  case 1  //tablemapping
+    if hStart!=0 then
+      // S: hStart,(hEnd),hUuid
+      print "\nS:";hStart;" ,(";hEnd;") ,";integer.h' hUuid
+      // and get all characteristics of this service
+      rc=BleDiscCharFirst(hConn,0,hStart,hEnd)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    else
+      //reached end of remote gatt table
+      TerminateTableMap(0)
+    endif
+    
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerCharDisc(hConn,hUuid,cProp,hVal,hiUuid) as integer
+  select gcState
+  case 0
+    print "\nEVDISCCHAR("
+    print "hConn=";integer.h' hConn;",hCharUuid=";integer.h' hUuid;",hIncUuid=";hiUuid
+    print ",hVal=";hVal;",Props=";integer.h' cProp;")"
+    
+  case 1  //tablemapping
+    if hVal!=0 then
+      // C: hVal,cProp,hUuid,hiUuid
+      print "\n C:";hVal;" ,";integer.h' cProp;" ,";integer.h' hUuid;" ,";hiUuid
+      // and get all descriptors of this characteristics
+      rc=BleDiscDescFirst(hConn,0,hVal)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    else
+      //no more chars in this service, so go for next service
+      rc = BleDiscServiceNext(hConn)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    endif
+
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerDescDisc(hConn,hUuid,hDesc) as integer
+  select gcState
+  case 0
+    print "\nEVDISCDESC("
+    print "hConn=";integer.h' hConn;",hDescUuid=";integer.h' hUuid;",hDesc=";hDesc;")"
+    
+  case 1  //tablemapping
+    if hDesc!=0 then
+      // D: hDesc,hUuid
+      print "\n  D:";hDesc;" ,";integer.h' hUuid
+    endif
+    // and get all descriptors of this characteristics
+    rc=BleDiscDescNext(hConn)
+    if rc!=0 then
+      //no more descc in this char, so go for next char
+      rc = BleDiscCharNext(hConn)
+      if rc!=0 then
+        rc = BleDiscServiceNext(hConn)
+        if rc!=0 then
+          TerminateTableMap(rc)
+        endif
+      endif
+    endif
+    
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerFindDesc(hConn,hDesc) as integer
+  print "\nEVFINDDESC("
+  print "hConn=";integer.h' hConn;",hDesc=";hDesc;")"
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerAttrWrite(hConn,aHndl,nSts) as integer
+    print "\nEVATTRWRITE(hConn=";integer.h' hConn;",handle=";aHndl;",status=";nSts;")"
+endfunc 0
+
+//==============================================================================
+//==============================================================================
+function HandlerAttrRead(hConn,hAttr,nSts) as integer
+  dim a$,ofst
+  dim temp$  
+  print "\nEVATTRREAD(hConn=";hConn;",handle=";hAttr;",status=";nSts;")"
+  if nSts == 0 then
+    rc = BleGattcReadData(hConn,hAttr,ofst,a$)
+    if rc==0 then
+      print "\n >BleGattcReadData(data=";StrHexize$(a$);",offset=";ofst;")"
+      print "\n                  (data=";StrEscape$(a$);")"
+      temp$ = "Temperature = "+StrEscape$(a$)+" degrees C\n"
+      rc = LORAMACTxData(1, temp$, 1)
+    endif
+  endif        
+  
+endfunc 1
+//==============================================================================
+//==============================================================================
+function HandlerAttrNtfyCmd() as integer
+  dim hConn,hAttr,att$,dscd
+  dim lumoVal
+  print "\nEVATTRNOTIFY()"
+  do
+    rc=BleGattcNotifyRead(hConn,hAttr,att$,dscd)
+    if rc==0 then
+      print "\n >BleGattcNotifyRead("
+      print "hConn=";integer.h' hConn;",handle=";hAttr;",Dumped=";dscd
+      print ",data=";StrHexize$(att$);")"
+
+		if hAttr == 65 then
+		// Luminosity sensor notificaion
+			lumoLast$ = StrHexize$(att$)
+			lumoVal = (((StrHex2Bin(lumoLast$,2))<<8)+(StrHex2Bin(lumoLast$,0)))
+			sprint #lumoLast$,"Luminosity reading = ";lumoVal;"\n"
+			print lumoLast$
+            rc = LORAMACTxData(1, lumoLast$, 1)
+		endif
+		
+		if hAttr == 14 then
+		// BL600 Temp reading
+		   rc = LORAMACTxData(1, att$, 1)
+		endif
+		
+	endif
+  dowhile rc==0  
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerTimer0() as integer
+    dim atHndl
+    
+    rc = BleGattcRead(hc[1],tempHVal,0)
+endfunc 1
+//==============================================================================
+//==============================================================================
+//******************************************************************************
+// Equivalent to main() in C
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// Enable synchronous event handlers
+//------------------------------------------------------------------------------
+OnEvent  EVUARTRX                 call HandlerUartRxCmd
+
+OnEvent  EVBLE_ADV_TIMEOUT        call HandlerBlrAdvTimOut
+OnEvent  EVBLE_ADV_REPORT         call HandlerAdvRpt
+
+
+ONEVENT  EVGPIOCHAN1              CALL HndlrBtn1Pr
+
+ONEVENT  EVBLEMSG           	  CALL HndlrBleMsg
+
+OnEvent  EVDISCPRIMSVC            call HandlerPrimSvc
+OnEvent  EVDISCCHAR               call HandlerCharDisc
+OnEvent  EVDISCDESC               call HandlerDescDisc
+OnEvent  EVFINDCHAR               call HandlerFindChar
+OnEvent  EVFINDDESC               call HandlerFindDesc
+OnEvent  EVATTRWRITE              call HandlerAttrWrite
+OnEvent  EVATTRREAD               call HandlerAttrRead
+OnEvent  EVATTRNOTIFY			  call HandlerAttrNtfyCmd
+
+OnEvent  EVLORAMACTXCOMPLETE      call HandlerLoRaTxComp
+OnEvent  EVLORAMACRXCOMPLETE      call HandlerLoRaRxComp
+OnEvent  EVLORAMACJOINING         call HandlerLoRaJoining
+OnEvent  EVLORAMACJOINED          call HandlerLoRaJoined
+
+OnEvent  EVTMR0                   call HandlerTimer0
+
+//------------------------------------------------------------------------------
+// Initialise Services and then wait for events
+//------------------------------------------------------------------------------
+
+//==============================================================================
+//==============================================================================
+sub Initialise()
+	linkCheckLoop = 0
+	lumoLast$ = ""
+    InitConnHandles()
+	status=0
+endsub
+
+//==============================================================================
+//==============================================================================
+sub Startup()
+  //Ensure we can detect changes in nAutorun (SIO28)
+  rc=GpioBindEvent(0,28,2)
+  rc=GpioBindEvent(1,5,1)     //Channel 1, bind to high-to-low on GPIO pin 5  
+  AssertResCode(rc,100)
+  
+  // Reset the LoRa radio
+  rc = LORAMACReset()
+
+  // Open the GATT client
+  rc=BleGattcOpen(0,0)
+  
+//Register base uuids with the underlying stack, otherwise the services with the
+//128bit uuid's will be delivered with a uuid handle == FF000000 == UNKNOWN
+    uuid$ = "569a0000b87f490c92cb11ba5ea5167c"
+    uuid$ = StrDehexize$(uuid$)
+    uHndl = BleHandleUuid128(uuid$)
+    uuid$ = "569a2a10b87f490c92cb11ba5ea5167c"
+    uuid$ = StrDehexize$(uuid$)
+    uHndl = BleHandleUuid128(uuid$)
+    uuid$ = "569a2a6eb87f490c92cb11ba5ea5167c"
+    uuid$ = StrDehexize$(uuid$)
+    uHndl = BleHandleUuid128(uuid$)
+  
+  // Start scanning for BLE devices
+  rc=BleScanStart(0,0)
+
+endsub
+
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+Initialise()
+Startup()
+
+//Send an OK response
+UartRsp(0)
+
+//------------------------------------------------------------------------------
+// Wait for a synchronous event.
+// An application can have multiple <WaitEvent> statements
+//------------------------------------------------------------------------------
+WaitEvent
+
+

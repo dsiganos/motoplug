@@ -1,0 +1,85 @@
+//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//
+// This app monitors the LTC2941 battery gas gauge device on the RM1xx DVK using 
+// the I2C bus. This device can be used to monigor current consumption by the 
+// RM1xx device.
+//
+// Details on the reported charge register value can be found in the datasheet
+// for the LTC2941.
+//
+//******************************************************************************
+dim nLTC2941Addr
+nLTC2941Addr = 0x64 //'Hard-coded 7-bit I2C address 1100100
+
+dim retVal
+dim handle
+dim nStatusRegVal
+dim nControlRegVal
+dim nChargeRegVal
+dim nStatusRegAddr
+dim nControlRegAddr
+dim nChargeRegAddr
+
+nStatusRegAddr  = 0x00 //' 8-bit status register
+nControlRegAddr = 0x01 //' 8-bit status register
+nChargeRegAddr  = 0x02 //' 16-bit accumulated charge
+
+nStatusRegVal  = 0x0
+nControlRegVal = 0x0
+nChargeRegVal  = 0x0
+
+function handleTimer0()
+	retVal = I2CReadReg16(nLTC2941Addr, nChargeRegAddr, nChargeRegVal)
+	retVal = (256*(nChargeRegVal & 0xff)+((nChargeRegVal >> 8) & 0xff))
+	print"ChargeRegVal = ";retVal;"\n"
+endfunc 1
+
+onevent EvTmr0 call handleTimer0
+
+retVal = I2COpen(400000,0,handle)
+if retVal != 0 then
+    print "\nFailed to open I2C interface with error code "; INTEGER.h' retVal
+    waitevent
+else
+    print "\nI2C open success \nHandle is ";handle
+endif
+
+nControlRegVal = 0x01 //'Set prescaler to 128 and disable !AL/CC pin
+retVal = I2CWriteReg8(nLTC2941Addr, nControlRegAddr, nControlRegVal)
+nControlRegVal = 0x38 //'Set prescaler to 128 and disable !AL/CC pin
+retVal = I2CWriteReg8(nLTC2941Addr, nControlRegAddr, nControlRegVal)
+	
+retVal = I2CReadReg8(nLTC2941Addr, nStatusRegAddr, nStatusRegVal)
+print"\nStatusRegVal = ";INTEGER.H'nStatusRegVal;"\n"
+
+retVal = I2CReadReg8(nLTC2941Addr, nControlRegAddr, nControlRegVal)
+print"\nControlRegVal = ";INTEGER.H'nControlRegVal;"\n"
+
+
+'//Start a recurring timer to read charge values
+TimerStart(0,1000,1)
+
+waitevent
+I2CClose(handle)

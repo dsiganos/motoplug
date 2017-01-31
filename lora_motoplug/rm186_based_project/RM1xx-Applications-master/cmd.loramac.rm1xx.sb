@@ -1,0 +1,1336 @@
+//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+//
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filename    ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//
+// This app provides for a command interface over the uart and the protocol is
+// as follows:-
+//
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Convention : (1) Case sensitive, and commands are presented in alphabetic order
+//              (2) If line ends with \ then it continues on next line. That does
+//                  not mean that it should be sent as multiple lines
+//              (3) Replace anything between ## 
+//              (4) #INTaaaa# means a number in decimal, hex, octal or binary
+//                      format -> 23 == 0x17 == h'17 == o'23 == b'10111
+//                      aaaa is just a description
+//              (5) #HEXaaaa# means a string without delimitors consisting of hex 
+//                      characters only aaaa is just a description
+//              (6) #STRaaaa# means a string without delimitors
+//                      aaaa is just a description
+//              (7) "STRaaaa" means a string which must have the " delimitor
+//                      aaaa is just a description
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//******************************************************************************
+
+//******************************************************************************
+// Definitions
+//******************************************************************************
+#include "RM1xx-defs.h"
+
+        //Set this to 0 to disable all debugging messages
+#define ENABLE_DEBUG_PRINTS                  1
+
+        // Number of characteristics
+#define NUM_OF_CHARS                         8
+        // size of i[]
+#define NUM_OF_I_PARAMS                     (8)
+        // size of s$[] and must be at least 8 elements for BleSvcRegDevInfo()     
+#define NUM_OF_S_PARAMS                     (8)
+        //Number of advert reports
+#define NUM_OF_ADV                          (4)
+        // Number of connections
+#define NUM_OF_CONNS                         8
+        // Number of services
+#define NUM_OF_SVCS                          4
+//******************************************************************************
+// Register Error Handler as early as possible
+//******************************************************************************
+sub HandlerOnErr()
+  print "\n OnErr - ";GetLastError();"\n"
+endsub
+onerror next HandlerOnErr
+
+//******************************************************************************
+// Debugging resource as early as possible
+//******************************************************************************
+
+//==============================================================================
+//==============================================================================
+sub AssertResCode(byval rc as integer,byval tag as integer)
+  if rc!=0 then
+    print "\nFailed with ";integer.h' rc;" at tag ";tag
+  endif
+endsub
+
+//==============================================================================
+//==============================================================================
+sub DbgMsgVal(byval msg$ as string, byval vl as integer)
+  if (ENABLE_DEBUG_PRINTS!=0) then
+    print "\n";msg$;" ";vl
+  endif
+endsub
+
+//==============================================================================
+//==============================================================================
+sub DbgMsg(byval msg$ as string)
+  if (ENABLE_DEBUG_PRINTS!=0) then
+    print "\n";msg$
+  endif
+endsub
+
+//******************************************************************************
+// Library Import
+//******************************************************************************
+
+//******************************************************************************
+// Debugging resource after libs
+//******************************************************************************
+
+//******************************************************************************
+// Global Variable Declarations
+//******************************************************************************
+
+dim rc
+dim looprc
+dim stRsp$ as string        //Uart rx data is stored here
+dim str$
+
+dim ok$,er$,pr$
+
+dim i[NUM_OF_I_PARAMS]      // index 0 used for return values
+dim s$[NUM_OF_S_PARAMS]    // must be at least 8 elements for BleSvcRegDevInfo()
+
+dim urtcmd$                 //cmd line from uart
+dim tkn$,tlen               //used by command parser
+dim urts                    //will be <0 if uart parser suspended
+dim adv$[NUM_OF_ADV]        //advert reports
+dim handle
+dim conHndl
+dim linkCheckLoop			// Loop sending Link Check Request messages for debugging
+
+dim PrevAds$[8] //Previous adverts (size of 8 adverts)
+dim PrevAdCount : PrevAdCount = 0 //Number of previous adverts
+
+dim hc[NUM_OF_CONNS+1]      //contains connection handles
+dim conns                   //number of connections
+dim hcVsp                   //handle of connection to use for VSP service
+
+dim gcState                 // gatt client state, 0=IDLE, 1=TableMapping
+
+dim lumoLast$				// Most recent reading from the Luminosity sensor
+dim lumoCount				// How many notifications we've received since the last post
+//******************************************************************************
+// Initialisse Global Variable
+//******************************************************************************
+
+ok$    = "\nOK"
+er$    = "\nERROR "
+pr$    = "\r\n>"
+
+urts=0 //not suspended
+handle=0
+
+//******************************************************************************
+// Function and Subroutine definitions
+//******************************************************************************
+SUB PrintMsg(str$)
+	rc = UartWrite(str$)
+ENDSUB 
+
+//==============================================================================
+//release all connection handles
+//==============================================================================
+sub InitConnHandles()
+  dim z
+  for z=0 to (NUM_OF_CONNS)
+    hc[z]=-1
+  next
+endsub
+//==============================================================================
+//==============================================================================
+function AcqConnHandle(hConn)
+  dim z
+  for z=1 to (NUM_OF_CONNS)
+    if hc[z] == -1 then
+      hc[z]=hConn
+      exitfunc z
+    endif
+  next
+endfunc 0
+//==============================================================================
+//==============================================================================
+function RelConnHandle(hConn)
+  dim z
+  for z=1 to (NUM_OF_CONNS)
+    if hc[z] == hConn then 
+      hc[z]=-1
+      exitfunc z
+    endif
+  next
+endfunc 0
+//==============================================================================
+//==============================================================================
+sub ShowConnParms(nCtx as integer)
+  dim intrvl,sprvto,slat
+  rc= BleGetCurConnParms(nCtx,intrvl,sprvto,slat)
+  AssertResCode(rc,1240)
+  if rc==0 then
+    DbgMsgVal("Conn Interval",intrvl)
+    DbgMsgVal("Conn Supervision Timeout",sprvto)
+    DbgMsgVal("Conn Slave Latency",slat)
+  endif
+endsub
+
+//This function removes leading 0s from the front of a string
+FUNCTION RemoveZeros(Data$) AS STRING
+	dim i, Done, TmpStr$ : i = 0 : Done = 0
+	WHILE (i < strlen(Data$))
+		TmpStr$ = MID$(Data$, i, 1)
+		IF (STRCMP(TmpStr$, "0") != 0) THEN
+			//Other number found - cut string to this length and mark as finished
+			TmpStr$ = RIGHT$(Data$, strlen(Data$)-i)
+			i = strlen(Data$)
+			Done = 1
+		ENDIF
+		i = i+1
+	ENDWHILE
+
+	IF (Done == 0) THEN
+		//Other number not found in provided string
+		TmpStr$ = "0"
+	ENDIF
+ENDFUNC TmpStr$
+
+//==============================================================================
+sub UartRsp(rsp as integer)
+  if rsp == 0 then
+    print ok$;pr$
+  elseif rsp > 0 then 
+    print er$;integer.h' rsp;pr$
+  endif
+  urts = rsp
+endsub
+
+//==============================================================================
+//==============================================================================
+function InitiateTableMap(hConn)
+  rc = BleDiscServiceFirst(hConn,0,0)
+  if rc==0 then
+    gcState=1
+    exitfunc -1
+  endif
+endfunc rc
+//==============================================================================
+//==============================================================================
+sub TerminateTableMap(rc)
+  gcState=0
+  if rc==0x6052 then
+    //BLE_GATTC_NO_MORE_DATA
+    rc=0
+  endif
+  UartRsp(rc)
+endsub
+//==============================================================================
+
+//-------------------------------------------------------------------------
+function ExtractIntTokens(u$,stIdx,num)
+  while num>0
+    tlen = ExtractIntToken(u$,i[stIdx])
+    if tlen == 0 then
+      exitfunc 4
+    endif
+    num=num-1
+    stIdx = stIdx+1
+  endwhile
+endfunc 0
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+function ExtractStrTokens(u$,stIdx,num)
+  while num>0
+    tlen = ExtractStrToken(u$,s$[stIdx])
+    if tlen == 0 then
+      exitfunc 3
+    endif
+    num=num-1
+    stIdx = stIdx+1
+  endwhile
+endfunc 0
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+function ExtractAddrTokens(u$,stIdx,num)
+  while num>0
+    tlen = ExtractStrToken(u$,tkn$)
+    if tlen == 0 then
+      exitfunc 3
+    endif
+    s$[stIdx]=StrDehexize$(tkn$)
+    if strlen(s$[stIdx]) != 7 then
+      exitfunc 5
+    endif
+    num=num-1
+    stIdx = stIdx+1
+  endwhile
+endfunc 0
+
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+sub UartMsg(msg$)
+  dim rc
+	rc = uartwrite(msg$)
+endsub
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+sub UartDecimalMsg(val)
+  dim rc
+	dim msg$
+	sprint #msg$,val
+	msg$ = "\n"+msg$
+	rc = uartwrite(msg$)
+endsub
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+sub UartHexMsg(val)
+  dim rc
+	dim msg$
+	sprint #msg$,integer.h' val
+	msg$ = "\n"+msg$
+	rc = uartwrite(msg$)
+endsub
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+function _Help()
+  print "\nlora [options]"
+  print "\n join"
+  print "\n activate"
+  print "\n check loop"
+  print "\n check stop"
+  print "\n send STRING"
+  print "\n doze"
+  print "\n reset"
+  print "\n get NAMEn"
+  print "\n set NAME VALUE"
+  print "\nble_scan [options]"
+  print "\n config NUM VALUE"  
+  print "\n start TIMEOUT FILTER"
+  print "\n stop"
+  print "\n abort"
+  print "\nble_connect [options]"
+  print "\n cancel"
+  print "\n config NUM VALUE"
+  print "\n connparms HND MIN MAX TOUT LAT"
+  print "\n ADDR7 TOUT MIN MAX TOUT"
+  print "\nvolts"
+  print "\nexit"
+  print "\nstop"
+endfunc 0
+//-------------------------------------------------------------------------
+//#CMD#// lora update param$   #INTvalue# 
+//#CMD#// lora readparam  param$  #INTvalue# 
+//#CMD#// lora readreg  #INTreg#  #INTvalue# 
+//#CMD#// lora pollregs 
+//#CMD#// lora tx 
+//#CMD#// lora txpkts1 #INTfrequencyChannel# #INTDataRate# #INTPowerBand # #INThandle#
+//#CMD#// lora cancel #INThandle#
+//-------------------------------------------------------------------------
+function _Lora()
+  dim prAdr$ 
+	dim val
+	dim res
+	dim reg
+	dim stringVal$
+  tlen = ExtractStrToken(urtcmd$,tkn$)
+  if tlen == 0 then
+    exitfunc 5
+  endif
+
+	if strcmp(tkn$,"join")==0 then
+		exitfunc LORAMACJoin(LORAMAC_JOIN_BY_REQUEST)
+	endif
+	if strcmp(tkn$, "activate")==0 then
+	    exitfunc LORAMACJoin(LORAMAC_JOIN_BY_PERSONALIZATION)
+	endif
+	if strcmp(tkn$,"check")==0 then
+		tlen = ExtractStrToken(urtcmd$,tkn$)
+		if tlen != 0 then
+			if strcmp(tkn$,"loop")==0 then
+				print "\nBeginning Link Check loop"
+				linkCheckLoop = 1
+			endif
+			if strcmp(tkn$,"stop")==0 then
+				print "\nStopping Link Check loop"
+				linkCheckLoop = 0
+			endif
+		endif
+		exitfunc LORAMACLinkCheck()
+	endif	
+
+	if strcmp(tkn$,"send")==0 then
+	    // #>lora send <data> <port> <confirm>
+		rc = ExtractStrToken(urtcmd$, tkn$)
+		rc = ExtractIntTokens(urtcmd$,1,2)
+		exitfunc LORAMACTxData(i[1], tkn$, i[2])
+	endif
+	
+  if strcmp(tkn$,"sleep")==0 then
+		rc = LORAMACSleepMode()
+		// Set GPIO 5 to DRIVER_GPIOFUNC_DIGITAL_IN and DRIVER_GPIOAUX_DIN_WAKE_ONLOW
+		rc= gpiosetfunc(5,1,16)
+		// Put the Nordic chip in "system off" mode
+		rc = SystemStateSet(0)
+		exitfunc 0
+	endif
+	
+  if strcmp(tkn$,"doze")==0 then
+		rc = LORAMACSleepMode()
+		UartClose()
+        rc=GpioUnBindEvent(0)
+        rc=GpioUnBindEvent(1)
+		WAITEVENT
+		exitfunc 0
+	endif
+
+  if strcmp(tkn$,"reset")==0 then
+		rc = LORAMACReset()
+		exitfunc 0
+	endif
+  
+  if strcmp(tkn$,"get")==0 then
+    rc = ExtractIntToken(urtcmd$,reg)
+    rc = LORAMACGetOption(reg, stringVal$)
+    print stringVal$
+    exitfunc rc
+  endif
+  
+  if strcmp(tkn$,"set")==0 then
+    rc = ExtractIntToken(urtcmd$,reg)
+    rc = ExtractStrToken(urtcmd$,stringVal$)
+    rc = LORAMACSetOption(reg, stringVal$)
+    exitfunc rc
+	endif
+
+	if strcmp(tkn$,"debug")==0 then
+		rc = ExtractIntTokens(urtcmd$,0,3)
+		if rc == 0 then
+			rc = LORAMACSetDebug(i[0],i[1],i[2])
+		endif
+		exitfunc rc
+	endif
+	
+ endfunc 5
+//-------------------------------------------------------------------------
+//#CMD#//  ble_scan abort
+//#CMD#//  ble_scan stop
+//#CMD#//  ble_scan config #INTcfgID# #INTvalue#
+//#CMD#//  ble_scan start #INTscantimeoutms# #INThandlefilter#
+//-------------------------------------------------------------------------
+function _Scan()  
+  tlen = ExtractStrToken(urtcmd$,tkn$)
+  if tlen == 0 then
+    exitfunc 5
+  endif
+  if strcmp(tkn$,"stop")==0 then
+    //cancel the connection attempt (release memory)
+    exitfunc BleScanStop()
+  endif
+  if strcmp(tkn$,"abort")==0 then
+    //cancel the connection attempt (do not release memory)
+    exitfunc BleScanAbort()
+  endif
+  if strcmp(tkn$,"config")==0 then
+    //extract 2 : (cfgID value) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleScanConfig(i[1],i[2])  
+  endif
+  if strcmp(tkn$,"start")==0 then
+    //extract 2 : (scantimeoutms handleFilter) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleScanStart(i[1],i[2])
+  endif
+  endfunc 5
+
+  
+//-------------------------------------------------------------------------
+//#CMD#//  ble_connect cancel
+//#CMD#//  ble_connect config #INTcfgID# #INTvalue#
+//#CMD#//  ble_connect connparms #INTconnHandle# #INTminConnIntMs# #INTmaxConnIntMs# #INTsprvsnToutMs# #INTslavelatency#
+//#CMD#//  ble_connect #HEXaddr7Bytes# #INTconntimeoutms# #INTminConnIntMs# #INTmaxConnIntMs# #INTsprvsnToutMs#
+//-------------------------------------------------------------------------
+function _Connect()  
+  tlen = ExtractStrToken(urtcmd$,tkn$)
+  if tlen == 0 then
+    exitfunc 5
+  endif
+  //=================================================
+  if strcmp(tkn$,"cancel")==0 then
+    //cancel the connection attempt
+    exitfunc BleConnectCancel()
+  endif
+  //=================================================
+  if strcmp(tkn$,"config")==0 then
+    //extract 2 : (#INTcfgID# #INTvalue#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleConnectConfig(i[1],i[2])  
+  endif
+  //=================================================
+  if strcmp(tkn$,"connparms")==0 then
+    //extract 5 : (#INTconnHandle# #INTminConnIntMs# #INTmaxConnIntMs# #INTsprvsnToutMs# #INTslavelatency#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,5)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleSetCurConnParms(hc[i[1]],i[2],i[3],i[4],i[5])  
+  endif
+  
+  //=================================================
+  //the current token has to be a mac address
+  s$[1]=StrDehexize$(tkn$)
+  if strlen(s$[1]) != 7 then
+    exitfunc 5
+  endif
+  //extract 4 : (conntimeoutms minConnIntMs maxConnIntMs sprvsnToutMs) and store starting at i[1]
+  rc = ExtractIntTokens(urtcmd$,1,4)
+  if rc != 0 then
+    exitfunc rc
+  endif
+endfunc BleConnect(s$[1],i[1],i[2],i[3],i[4])
+//-------------------------------------------------------------------------
+//#CMD#//  gattc open #INTbuflen# #INTflags#
+//#CMD#//  gattc close
+//#CMD#//  gattc svc first #INTconnHandle# #INTstartAttrHandle# #INTsvcUuidHandle#
+//#CMD#//  gattc svc next #INTconnHandle#
+//#CMD#//  gattc char first #INTconnHandle# #INTuuidHandle# #INTsvcStartAttrHandle# #INTsvcEndAttrHandle#
+//#CMD#//  gattc char next #INTconnHandle#
+//#CMD#//  gattc desc first #INTconnHandle# #INTuuidHandle# #INTcharStartAttrHandle#
+//#CMD#//  gattc desc next #INTconnHandle#
+//#CMD#//  gattc findchar #INTconnHandle# #INTsvcUuidHandle# #INTsvcIndex# #INTcharUuidHandle# #INTcharIndex#
+//#CMD#//  gattc finddesc #INTconnHandle# #INTsvcUuidHandle# #INTsvcIndex# #INTcharUuidHandle# #INTcharIndex# #INTdescUuidHandle# #INTdescIndex#
+//#CMD#//  gattc tablemap #INTconnHandle#
+//#CMD#//  gattc read #INTconnHandle# #INTattrHandle# #INToffset#
+//#CMD#//  gattc write #INTconnHandle# #INTattrHandle# #HEXdata#
+//#CMD#//  gattc write$ #INTconnHandle# #INTattrHandle# #STRdata#
+//#CMD#//  gattc writecmd #INTconnHandle# #INTattrHandle# #HEXdata#
+//#CMD#//  gattc writecmd$ #INTconnHandle# #INTattrHandle# #STRdata#
+//-------------------------------------------------------------------------
+function _Gattc()  
+  dim cmdid
+  tlen = ExtractStrToken(urtcmd$,tkn$)
+  if tlen == 0 then
+    exitfunc 5
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"open")==0 then
+    //extract 2 (#INTbuflen# #INTflags#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleGattcOpen(i[1],i[2])
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"close")==0 then
+    //no parms to extract
+    BleGattcClose()
+    exitfunc 0
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"svc")==0 then
+    if gcState!=0 then
+      exitfunc 8
+    endif
+    tlen = ExtractStrToken(urtcmd$,tkn$)
+    if tlen == 0 then
+      exitfunc 5
+    endif  
+    if strcmp(tkn$,"first")==0 then
+      //extract 3 (#INTconnHandle# #INTstartAttrHandle# #INTsvcUuidHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,3)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscServiceFirst(hc[i[1]],i[2],i[3])
+    endif
+    if strcmp(tkn$,"next")==0 then
+      //extract 1 (#INTconnHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,1)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscServiceNext(hc[i[1]])
+    endif
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"char")==0 then
+    if gcState!=0 then
+      exitfunc 8
+    endif
+    tlen = ExtractStrToken(urtcmd$,tkn$)
+    if tlen == 0 then
+      exitfunc 5
+    endif  
+    if strcmp(tkn$,"first")==0 then
+      //extract 4 (#INTconnHandle# #INTuuidHandle# #INTsvcStartAttrHandle# #INTsvcEndAttrHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,4)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscCharFirst(hc[i[1]],i[2],i[3],i[4])
+    endif
+    if strcmp(tkn$,"next")==0 then
+      //extract 1 (#INTconnHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,1)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscCharNext(hc[i[1]])
+    endif
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"desc")==0 then
+    if gcState!=0 then
+      exitfunc 8
+    endif
+    tlen = ExtractStrToken(urtcmd$,tkn$)
+    if tlen == 0 then
+      exitfunc 5
+    endif  
+    if strcmp(tkn$,"first")==0 then
+      //extract 3 (#INTconnHandle# #INTuuidHandle# #INTcharStartAttrHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,3)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscDescFirst(hc[i[1]],i[2],i[3])
+    endif
+    if strcmp(tkn$,"next")==0 then
+      //extract 1 (#INTconnHandle#) and store starting at i[1]
+      rc = ExtractIntTokens(urtcmd$,1,1)
+      if rc != 0 then
+        exitfunc rc
+      endif
+      exitfunc BleDiscDescNext(hc[i[1]])
+    endif
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"findchar")==0 then
+    //extract 5 (#INTconnHandle# #INTsvcUuidHandle# #INTsvcIndex# #INTcharUuidHandle# #INTcharIndex#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,5)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleGattcFindChar(hc[i[1]],i[2],i[3],i[4],i[5])
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"finddesc")==0 then
+    //extract 7 (#INTconnHandle# #INTsvcUuidHandle# #INTsvcIndex# #INTcharUuidHandle# #INTcharIndex# #INTdescUuidHandle# #INTdescIndex#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,7)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleGattcFindDesc(hc[i[1]],i[2],i[3],i[4],i[5],i[6],i[7])
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"tablemap")==0 then
+    if gcState!=0 then
+      exitfunc 8
+    endif
+    //extract 1 (#INTconnHandle#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,1)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc InitiateTableMap(hc[i[1]])
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if strcmp(tkn$,"read")==0 then
+    //extract 3 (#INTconnHandle# #INTattrHandle# #INToffset#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,3)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    exitfunc BleGattcRead(hc[i[1]],i[2],i[3])
+  endif
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  cmdid=0
+  if strcmp(tkn$,"write")==0 then
+    cmdid=1
+  endif
+  if strcmp(tkn$,"write$")==0 then
+    cmdid=2
+  endif
+  if cmdId != 0 then
+    //extract 3 (#INTconnHandle# #INTattrHandle# #HEXdata#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    if cmdid==1 then
+      //extract 1 (#HEXdata#) and store starting at s$[1]
+      tlen = ExtractStrToken(urtcmd$,s$[1])
+      if tlen == 0 then
+        exitfunc 5
+      endif
+      s$[1]=StrDehexize$(s$[1])
+      tlen = strlen(s$[1])
+    else
+      //extract 1 (#STRdata#) and store starting at s$[1]
+      tlen = ExtractStrToken(urtcmd$,s$[1])
+    endif
+    if tlen<1  then
+      exitfunc 5
+    endif    
+    exitfunc BleGattcWrite(hc[i[1]],i[2],s$[1])
+  endif
+  cmdid=0
+  if strcmp(tkn$,"write")==0 then
+    cmdid=0x01
+  endif
+  if strcmp(tkn$,"write$")==0 then
+    cmdid=0x02
+  endif
+  if strcmp(tkn$,"writecmd")==0 then
+    cmdid=0x11
+  endif
+  if strcmp(tkn$,"writecmd$")==0 then
+    cmdid=0x12
+  endif
+  if cmdId != 0 then
+    //extract 3 (#INTconnHandle# #INTattrHandle# #HEXdata#) and store starting at i[1]
+    rc = ExtractIntTokens(urtcmd$,1,2)
+    if rc != 0 then
+      exitfunc rc
+    endif
+    if (cmdid & 0xF)==1 then
+      //extract 1 (#HEXdata#) and store starting at s$[1]
+      tlen = ExtractStrToken(urtcmd$,s$[1])
+      if tlen == 0 then
+        exitfunc 5
+      endif
+      s$[1]=StrDehexize$(s$[1])
+      tlen = strlen(s$[1])
+    else
+      //extract 1 (#STRdata#) and store starting at s$[1]
+      tlen = ExtractStrToken(urtcmd$,s$[1])
+    endif
+    if tlen<1  then
+      exitfunc 5
+    endif    
+    if (cmdid & 0xF0)==0 then
+      exitfunc BleGattcWrite(hc[i[1]],i[2],s$[1])
+    else
+      exitfunc BleGattcWriteCmd(hc[i[1]],i[2],s$[1])
+    endif
+  endif
+endfunc 5
+
+
+//==============================================================================
+function OnUartCmd() as integer
+  dim inputVoltage_mV
+  rc=1 //assume there is an error
+  tlen = ExtractStrToken(urtcmd$,tkn$) //get first token
+  if tlen == 0 then
+    rc=0
+  elseif tlen > 0 then
+    
+    if strcmp(tkn$,"help")==0 then
+      rc = _Help()
+      
+    elseif strcmp(tkn$,"lora")==0 then
+      rc = _Lora()
+      
+    elseif strcmp(tkn$,"ble_scan")==0 then
+      rc = _Scan()
+
+    elseif strcmp(tkn$,"ble_connect")==0 then
+      rc = _Connect()
+	  
+	elseif strcmp(tkn$,"gattc")==0 then
+	  rc = _Gattc()
+    	  
+    elseif strcmp(tkn$,"volts")==0 then
+      inputVoltage_mV = ReadPwrSupplyMv()
+      print "Input voltage = ";inputVoltage_mV;"mV\n"
+      rc=0
+	  
+    elseif strcmp(tkn$,"exit")==0 then
+      rc=0
+      exitfunc 0
+    
+    endif
+  endif
+  // send a response back to the user
+  UartRsp(rc)
+endfunc 1
+
+//******************************************************************************
+// Handler definitions
+//******************************************************************************
+
+//==============================================================================
+// This handler is called when data has arrived at the serial port
+//==============================================================================
+function HandlerUartRxCmd() as integer
+  dim nMatch
+  
+  if urts < 0 then
+    //uart parser is suspended
+    exitfunc 1
+  endif
+
+  //check if CR has been received
+  nMatch=UartReadMatch(stRsp$,13)
+  if nMatch!=0 then
+    //CR exists in the input buffer
+    urtcmd$ = strsplitleft$(stRsp$,nMatch)
+    exitfunc OnUartCmd()
+  endif
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is an advert timeout
+//==============================================================================
+function HandlerBlrAdvTimOut() as integer
+  print "\n\nAdverts timeout"
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is an advert report waiting to be read
+//==============================================================================
+//This handler will be called when an advert report is received
+FUNCTION HandlerAdvRpt()
+    DIM periphAddr$, advData$, nRssi, ADval$, TmpStr$, TmpStr2$, TmpVal
+
+    //Read all cached advert reports
+    looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
+    WHILE (looprc == 0)
+	//Check if this advert was received recently
+	TmpStr$ = periphAddr$ + advData$
+	TmpVal = 0
+	while (TmpVal < PrevAdCount)
+		if (strcmp(TmpStr$, PrevAds$[TmpVal]) == 0) then
+			//Already seen this advert, ignore it
+			TmpVal = 254
+		endif
+		TmpVal = TmpVal+1
+	endwhile
+
+	if (TmpVal != 255) then
+		//Advert not seen before - get device name
+		rc = BLEGETADBYTAG(advData$, 8, TmpStr$)
+		if (rc == 0) then
+			//Name found at index 0x08
+			PRINT TmpStr$;"\n"
+		else
+			//Name not found at index 0x08, check 0x09
+			rc = BLEGETADBYTAG(advData$, 9, TmpStr$)
+			if (rc == 0) then
+				//Name found at index 0x09
+				PRINT TmpStr$;"\n"
+			elseif (strcmp(TmpStr$, "CC2650 SensorTag")==0) then
+			    //Connect to the SensorTag
+				rc = BleConnectCancel()
+				print "Found the sensor. Connecting ...\n"
+				rc = BleConnect(periphAddr$, 5000, 7500, 100000, 500000)
+			endif
+		IF (STRCMP(TmpStr$, "0") != 0) THEN			
+			else
+				//Name not found
+				PRINT "[Device Name Not Found]\n"
+			endif
+		endif
+
+		//Output BT addr and RSSI
+		PRINT strhexize$(periphAddr$);", RSSI: ";nRssi;"\n"
+
+		//Go through all tags and print them out
+		PRINT "Advertising data [hex]:\n"
+		TmpVal = 0
+		while (TmpVal <= 0xff) 
+			if (TmpVal == 8) then
+				//Skip name tags
+				TmpVal = 10
+			endif
+			rc = BLEGETADBYTAG(advData$, TmpVal, TmpStr$)
+			if (rc == 0) then
+				//Output tag
+				TmpStr2$ = ""
+				SPRINT #TmpStr2$,INTEGER.H'TmpVal
+				TmpStr2$ = RemoveZeros(TmpStr2$)
+				PRINT "\n  Length: ";strlen(TmpStr$);", Type: 0x";TmpStr2$;", Value: ";STRHEXIZE$(TmpStr$)
+			endif
+			TmpVal = TmpVal+1
+		endwhile
+
+		//Newline
+		PRINT "\n"
+
+		//Check if the array is too large
+		if (PrevAdCount > 6) then
+			//Array too big - clear it
+			TmpVal = 0
+			while (TmpVal < 8)
+				PrevAds$[TmpVal] = ""
+				TmpVal = TmpVal+1
+			endwhile
+			PrevAdCount = 0
+		endif
+
+		//Add this adverts to the recent list
+		TmpStr$ = periphAddr$ + advData$
+		PrevAds$[PrevAdCount] = TmpStr$
+		PrevAdCount = PrevAdCount+1
+	endif
+        looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
+    ENDWHILE
+	
+ENDFUNC 1
+
+//==============================================================================
+//==============================================================================
+function HandlerFindChar(hConn,cProp,hVal,hiUuid) as integer
+  print "\nEVFINDCHAR("
+  print "hConn=";integer.h' hConn;",hIncUuid=";integer.h' hiUuid
+  print ",hVal=";hVal;",Props=";integer.h' cProp;")"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when there is a EVCHARVAL message
+'//==============================================================================
+function HandlerCharVal(BYVAL hChar AS INTEGER, byval offset, byval len) as integer
+  print "\nEVCHARVAL(hChar=";integer.h' hChar;",offset=";offset;",len=";len;")"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when there is a LoRa TX Complete event
+'//==============================================================================
+function HandlerLoRaTxComp() as integer
+	print "\nLoRa TX Complete Event"
+	if linkCheckLoop>0 then
+		rc=LORAMACLinkCheck()
+	endif
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when there is a LoRa RX Complete event
+'//==============================================================================
+function HandlerLoRaRxComp() as integer
+	print "\nLoRa RX Complete Event"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when the LoRa Join procedure starts
+'//==============================================================================
+function HandlerLoRaJoining() as integer
+	print "\nAttempting to join the LoRa network"
+endfunc 1
+
+'//==============================================================================
+'// This handler is called when there is a LoRa Join Success Complete event
+'//==============================================================================
+function HandlerLoRaJoined() as integer
+	print "\nSuccessfully joined the LoRa network"
+endfunc 1
+
+function HandlerLoRaJoinFailed() as integer
+	print "\nFailed to join the LoRa network"
+endfunc 1
+function HandlerLoRaTxTimeout() as integer
+	print "\nLoRa TX Timeout"
+endfunc 1
+function HandlerLoRaRxTimeout() as integer
+	print "\nLoRa RX Timeout"
+    if linkCheckLoop>0 then
+		rc=LORAMACLinkCheck()
+	endif
+endfunc 1
+function HandlerLoRaRxError() as integer
+	print "\nLoRa RX Error"
+endfunc 1
+
+//==============================================================================
+// This handler is called when a Link Check Response is received
+//==============================================================================
+function HandlerLoRaLinkCheckResponse(BYVAL nMargin AS INTEGER, BYVAL nGwCnt AS INTEGER) as integer
+	print "\nLink Check Response: Margin = ";nMargin;"dB   Gateway Count = ";nGwCnt;""
+endfunc 1
+
+//==============================================================================
+// This handler is called when downlink data is received from the gateway
+//==============================================================================
+function HandlerLoRaRxData() as integer
+    dim data$
+	dim nRSSI,nPort,nSNR
+	
+	rc = LORAMACRxData(data$, nRSSI, nPort, nSNR)	
+	print "\nLoRa Received downstream data on port ";nPort;"\nRSSI: ";nRSSI;"   SNR: ";nSNR;"\n";data$;""
+endfunc 1
+
+//==============================================================================
+// This handler is called when Teh TxDone signal has been recevied in the module
+//==============================================================================
+function HandlerLoRaTxDone() As Integer
+	str$ = "\nTx Done"
+	PrintMsg(str$)
+endfunc 1
+
+//==============================================================================
+// This handler is called an RxWindow has faied to revceive a sync pulse
+//==============================================================================
+function HandlerLoRaNoSync() As Integer
+	str$ = "\nNo Sync pulse"
+	PrintMsg(str$)
+endfunc 1
+
+//==============================================================================
+// This handler is called when An ADR command has been receive as part of a downlink.
+//==============================================================================
+function HandlerLoRaAdr() As Integer
+	str$ = "\nAdr received"
+	PrintMsg(str$)
+endfunc 1
+
+#define BLE_EVBLEMSGID_CONNECT                        0
+#define BLE_EVBLEMSGID_DISCONNECT                     1
+#define BLE_EVBLEMSGID_IMMEDIATE_ALERT_SERVICE_ALERT  2
+#define BLE_EVBLEMSGID_LINKLOSS_SERVICE_ALERT         3
+#define BLE_EVBLEMSGID_SERVICE_ERROR                  4
+#define BLE_EVBLEMSGID_HTS_INDICATION_STATE           5
+#define BLE_EVBLEMSGID_HTS_INDICATION_CNF             6
+#define BLE_EVBLEMSGID_BPS_INDICATION_STATE           7
+#define BLE_EVBLEMSGID_BPS_INDICATION_CNF             8
+#define BLE_EVBLEMSGID_DISPLAY_PASSKEY                9
+#define BLE_EVBLEMSGID_NEW_BOND                       10
+#define BLE_EVBLEMSGID_AUTH_KEY_REQUEST               11
+#define BLE_EVBLEMSGID_HRS_NOTIFICATION_STATE         12
+#define BLE_EVBLEMSGID_BPS_CUFF_NOTIFY_STATE          13
+#define BLE_EVBLEMSGID_CONN_PARMS_UPDATE              14
+#define BLE_EVBLEMSGID_CONN_PARMS_UPDATE_FAIL         15
+#define BLE_EVBLEMSGID_CONN_TO_BONDED_MASTER          16
+#define BLE_EVBLEMSGID_UPDATED_BOND                   17
+#define BLE_EVBLEMSGID_ENCRYPTED                      18
+#define BLE_EVBLEMSGID_POWER_FAILURE_WARNING          19
+#define BLE_EVBLEMSGID_UNENCRYPTED                    20
+#define BLE_EVBLEMSGID_DEVICENAME_WRITE               21
+#define BLE_EVBLEMSGID_BOND_ADDFAIL                   22
+
+//==============================================================================
+// This handler is called when there is a BLE message
+//==============================================================================
+function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
+  dim hz
+  dim atHandle, at$
+  
+  select nMsgId
+  case BLE_EVBLEMSGID_CONNECT
+    hz = AcqConnHandle(nCtx)
+    conns = conns + 1
+    print "\n --- Connect: (";integer.h' nCtx;") handle=";hz
+    if hz == 0 then
+      //Could not store the handle so drop the connection
+      rc = BleDisconnect(nCtx)
+      print " DROPPED"
+    else
+      //accepted so display connection parameters
+      ShowConnParms(nCtx)
+      //always assume most recent connection for VSP
+      hcVsp = hc[hz]
+    endif
+    rc = BleDiscServiceFirst(nCtx,0,0)
+	
+  case BLE_EVBLEMSGID_DISCONNECT
+    hz = RelConnHandle(nCtx)
+    conns = conns - 1
+    print "\n --- Disconnect: (";integer.h' nCtx;") handle=";hz;pr$
+
+  case BLE_EVBLEMSGID_DISPLAY_PASSKEY
+    DbgMsgVal("Display Pairing Passkey ",nCtx)
+
+  case BLE_EVBLEMSGID_NEW_BOND
+    DbgMsg(" +++ New Bond")
+
+  case BLE_EVBLEMSGID_UPDATED_BOND
+    DbgMsg(" +++ Updated Bond")
+
+  case BLE_EVBLEMSGID_ENCRYPTED
+    DbgMsg(" +++ Encrypted Connection")
+
+  case BLE_EVBLEMSGID_CONN_TO_BONDED_MASTER
+    DbgMsgVal(" -- Conn to Bonded Master ",nCtx)
+
+  case BLE_EVBLEMSGID_AUTH_KEY_REQUEST
+    DbgMsgVal(" +++ Auth Key Request, type=",nCtx)
+
+  case BLE_EVBLEMSGID_CONN_PARMS_UPDATE
+    ShowConnParms(nCtx)
+
+  case BLE_EVBLEMSGID_CONN_PARMS_UPDATE_FAIL
+    DbgMsg(" ??? Conn Parm Negotiation FAILED")
+
+  case else
+    DbgMsgVal("Unknown Ble Msg", nMsgId)
+  endselect
+endfunc 1
+
+
+//==============================================================================
+//handler to service button 0 pressed
+//==============================================================================
+FUNCTION HndlrBtn1Pr() AS INTEGER
+	print "\nbutton 1 pressed"
+    //just exit and stop waiting for events
+ENDFUNC 0
+
+
+//==============================================================================
+//==============================================================================
+function HandlerPrimSvc(hConn,hUuid,hStart,hEnd) as integer
+  select gcState
+  case 0
+    print "\nEVDISCPRIMSVC("
+    print "hConn=";integer.h' hConn;",hUuid=";integer.h' hUuid
+    print ",hStart=";hStart;",hEnd=";hEnd;")"
+    
+  case 1  //tablemapping
+    if hStart!=0 then
+      // S: hStart,(hEnd),hUuid
+      print "\nS:";hStart;" ,(";hEnd;") ,";integer.h' hUuid
+      // and get all characteristics of this service
+      rc=BleDiscCharFirst(hConn,0,hStart,hEnd)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    else
+      //reached end of remote gatt table
+      TerminateTableMap(0)
+    endif
+    
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerCharDisc(hConn,hUuid,cProp,hVal,hiUuid) as integer
+  select gcState
+  case 0
+    print "\nEVDISCCHAR("
+    print "hConn=";integer.h' hConn;",hCharUuid=";integer.h' hUuid;",hIncUuid=";hiUuid
+    print ",hVal=";hVal;",Props=";integer.h' cProp;")"
+    
+  case 1  //tablemapping
+    if hVal!=0 then
+      // C: hVal,cProp,hUuid,hiUuid
+      print "\n C:";hVal;" ,";integer.h' cProp;" ,";integer.h' hUuid;" ,";hiUuid
+      // and get all descriptors of this characteristics
+      rc=BleDiscDescFirst(hConn,0,hVal)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    else
+      //no more chars in this service, so go for next service
+      rc = BleDiscServiceNext(hConn)
+      if rc!=0 then
+        TerminateTableMap(rc)
+      endif
+    endif
+
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerDescDisc(hConn,hUuid,hDesc) as integer
+  select gcState
+  case 0
+    print "\nEVDISCDESC("
+    print "hConn=";integer.h' hConn;",hDescUuid=";integer.h' hUuid;",hDesc=";hDesc;")"
+    
+  case 1  //tablemapping
+    if hDesc!=0 then
+      // D: hDesc,hUuid
+      print "\n  D:";hDesc;" ,";integer.h' hUuid
+    endif
+    // and get all descriptors of this characteristics
+    rc=BleDiscDescNext(hConn)
+    if rc!=0 then
+      //no more descc in this char, so go for next char
+      rc = BleDiscCharNext(hConn)
+      if rc!=0 then
+        rc = BleDiscServiceNext(hConn)
+        if rc!=0 then
+          TerminateTableMap(rc)
+        endif
+      endif
+    endif
+    
+  case else
+  endselect
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerFindDesc(hConn,hDesc) as integer
+  print "\nEVFINDDESC("
+  print "hConn=";integer.h' hConn;",hDesc=";hDesc;")"
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerAttrWrite(hConn,aHndl,nSts) as integer
+    print "\nEVATTRWRITE(hConn=";integer.h' hConn;",handle=";aHndl;",status=";nSts;")"
+endfunc 1
+
+//==============================================================================
+//==============================================================================
+function HandlerAttrRead(hConn,hAttr,nSts) as integer
+  dim a$,ofst  
+  print "\nEVATTRREAD(hConn=";hConn;",handle=";hAttr;",status=";nSts;")"
+  if nSts == 0 then
+    rc = BleGattcReadData(hConn,hAttr,ofst,a$)
+    if rc==0 then
+      print "\n >BleGattcReadData(data=";StrHexize$(a$);",offset=";ofst;")"
+      print "\n                  (data=";StrEscape$(a$);")"
+    endif
+  endif        
+endfunc 1
+//==============================================================================
+//==============================================================================
+function HandlerAttrNtfyCmd() as integer
+  dim hConn,hAttr,att$,dscd
+  print "\nEVATTRNOTIFY()"
+  do
+    rc=BleGattcNotifyRead(hConn,hAttr,att$,dscd)
+    if rc==0 then
+      print "\n >BleGattcNotifyRead("
+      print "hConn=";integer.h' hConn;",handle=";hAttr;",Dumped=";dscd
+      print ",data=";StrHexize$(att$);")"
+
+		if hAttr == 65 then
+		// Luminosity sensor notificaion
+			lumoLast$ = StrHexize$(att$)
+			lumoCount = lumoCount + 1
+			if lumoCount > 10 then
+				print "\nSending the latest value to LoRa\n"
+				rc = LORAMACTxData(1, lumoLast$, 1)
+				lumoCount = 0
+			endif
+		endif
+	endif
+  dowhile rc==0  
+endfunc 1
+//******************************************************************************
+// Equivalent to main() in C
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// Enable synchronous event handlers
+//------------------------------------------------------------------------------
+OnEvent  EVUARTRX                 call HandlerUartRxCmd
+
+OnEvent  EVBLE_ADV_TIMEOUT        call HandlerBlrAdvTimOut
+OnEvent  EVBLE_ADV_REPORT         call HandlerAdvRpt
+ONEVENT  EVGPIOCHAN1              CALL HndlrBtn1Pr
+
+ONEVENT  EVBLEMSG           CALL HndlrBleMsg
+
+
+OnEvent  EVDISCPRIMSVC            call HandlerPrimSvc
+OnEvent  EVDISCCHAR               call HandlerCharDisc
+OnEvent  EVDISCDESC               call HandlerDescDisc
+OnEvent  EVFINDCHAR               call HandlerFindChar
+OnEvent  EVFINDDESC               call HandlerFindDesc
+OnEvent  EVATTRWRITE              call HandlerAttrWrite
+OnEvent  EVATTRREAD               call HandlerAttrRead
+OnEvent  EVATTRNOTIFY							call HandlerAttrNtfyCmd
+
+OnEvent  EVLORAMACTXCOMPLETE      call HandlerLoRaTxComp
+OnEvent  EVLORAMACRXCOMPLETE      call HandlerLoRaRxComp
+OnEvent  EVLORAMACJOINING         call HandlerLoRaJoining
+OnEvent  EVLORAMACJOINED          call HandlerLoRaJoined
+OnEvent  EVLORAMACJOINFAILED      call HandlerLoRaJoinFailed
+OnEvent  EVLORAMACTXTIMEOUT				call HandlerLoRaTxTimeout
+OnEvent  EVLORAMACRXTIMEOUT				call HandlerLoRaRxTimeout
+OnEvent  EVLORAMACRXERROR					call HandlerLoRaRxError
+OnEvent  EVLORAMACRXDATA          call HandlerLoRaRxData
+OnEvent  EVLORAMACTXDONE					CALL HandlerLoRaTxDone
+OnEvent  EVLORAMACNOSYNC					CALL HandlerLoRaNoSync
+OnEvent  EVLORAMACADR							CALL HandlerLoRaAdr
+
+OnEvent EVLORAMACLINKCHECKRESPMSG call HandlerLoRaLinkCheckResponse
+
+//------------------------------------------------------------------------------
+// Initialise Services and then wait for events
+//------------------------------------------------------------------------------
+
+//==============================================================================
+//==============================================================================
+sub Initialise()
+	linkCheckLoop = 0
+	lumoLast$ = ""
+	lumoCount = 0
+    InitConnHandles()
+	// Open the GATT client
+//	rc=BleGattcOpen(0,0)
+	// Start scanning for BLE devices
+//	rc=BleScanStart(0,0)
+	// Join the LoRa network
+//	rc=LORAMACJoin(LORAMAC_JOIN_BY_PERSONALIZATION)
+endsub
+
+//==============================================================================
+//==============================================================================
+sub Startup()
+  //Ensure we can detect changes in nAutorun (SIO28)
+  rc=GpioBindEvent(0,28,2)
+  rc=GpioBindEvent(1,5,1)     //Channel 1, bind to high-to-low on GPIO pin 5  
+endsub
+
+
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+Initialise()
+Startup()
+
+//Send an OK response
+UartRsp(0)
+
+//------------------------------------------------------------------------------
+// Wait for a synchronous event.
+// An application can have multiple <WaitEvent> statements
+//------------------------------------------------------------------------------
+WaitEvent
+
+

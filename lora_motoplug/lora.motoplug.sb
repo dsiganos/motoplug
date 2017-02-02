@@ -12,16 +12,73 @@ DIM rc
 DIM ADC_reading
 DIM data$
 DIM Battery
-DIM Batterydiv
-DIM Batterymod
 DIM i: i = 1
 
+FUNCTION count_integer_digits(number) As Integer
+// Receives a number and returns the number of digits
+// The number is expected to be an integer in decimal format.
+    DIM count
+    count = 0
+    while(number != 0)
+        number = number/10
+        count = count + 1
+    endwhile
+ENDFUNC count
+
+FUNCTION convert_bat_from_ADC_reading(ADC_read)
+    //ADC sensitivity equation:
+    // 2^n/Reference Voltage = ADC reading/Analog Voltage
+    //1024/3.6 = ADC reading/Analog Voltage
+    // Analog Voltage = ADC reading * 3.6 / 1024
+    // Fixed point arithmetic: multiplied by 100
+    battery = (ADC_read*360)/1024
+
+    // Used voltage divider to supply voltage to the ADC pin because it cannot
+    // handle voltages in the 10 - 16 range.
+    // The resistances used are 1 KOhm and 12.5 KOhm. The output voltage is:
+    //Vout = R1+ (Vin /R1+R2) --> Vout = 13.5*Vin
+    // Fixed point arithmetic: multiplied by 10
+    battery = battery *135
+ENDFUNC battery
+
+SUB print_battery(battery)
+    DIM Batterydiv
+    DIM Batterymod
+
+    // Convert fixed point to decimal point.
+    batterydiv = battery/1000
+    batterymod = battery%1000
+
+    print "Reading voltage... "
+
+    // Add preceding zeros. If the number after the decimal point is less than 3
+    // digits when printed the preceding zeros are ommitted and the significance
+    // changes. eg: battery = 12010. batterydiv = 12. batterymod = 015
+    // If we did not add preceding zeros the printed result would be 12.15 which
+    // is not the intented one (12.015).
+    if (count_integer_digits(batterymod)==2) then
+        SPRINT #Data$,integer.d' Batterydiv; ".0";batterymod; " V\n"
+        print Data$
+    elseif (count_integer_digits(batterymod)==1) then
+        SPRINT #Data$,integer.d' Batterydiv; ".00";batterymod; " V\n"
+        print Data$
+    else
+        print Batterydiv; "."; Batterymod; " V\n"
+    endif
+ENDSUB
+
 FUNCTION HandlerTimer0()
-    SPRINT #Data$,integer.d' Batterydiv
+    ADC_reading = GpioRead(ADC_PIN)
+
+    Battery = convert_bat_from_ADC_reading(ADC_reading)
+    print_battery(battery)
+
+    SPRINT #Data$,integer.d' battery/1000
     rc = LORAMACTxData(PORT,Data$, 0)
     print "frame count is ";i; "\n"
     i = i + 1
-ENDFUNC 0
+    timerstart(0,60000,0)
+ENDFUNC 1
 
 FUNCTION LoramacJoining() As Integer
     print "Joining\n"
@@ -53,56 +110,6 @@ FUNCTION LoramacTxTimeout() As Integer
     print "Tx Timeout\n"
 ENDFUNC 1
 
-FUNCTION count_integer_digits(number) As Integer
-// Receives a number and returns the number of digits
-// The number is expected to be an integer in decimal format.
-    DIM count
-    count = 0
-    while(number != 0)
-        number = number/10
-        count = count + 1
-    endwhile
-ENDFUNC count
-
-FUNCTION convert_bat_from_ADC_reading(ADC_read)
-    //ADC sensitivity equation:
-    // 2^n/Reference Voltage = ADC reading/Analog Voltage
-    //1024/3.6 = ADC reading/Analog Voltage
-    // Analog Voltage = ADC reading * 3.6 / 1024
-    // Fixed point arithmetic: multiplied by 100
-    battery = (ADC_read*360)/1024
-
-    // Used voltage divider to supply voltage to the ADC pin because it cannot
-    // handle voltages in the 10 - 16 range.
-    // The resistances used are 1 KOhm and 12.5 KOhm. The output voltage is:
-    //Vout = R1+ (Vin /R1+R2) --> Vout = 13.5*Vin
-    // Fixed point arithmetic: multiplied by 10
-    battery = battery *135
-ENDFUNC battery
-
-SUB print_battery(battery)
-    // Convert fixed point to decimal point.
-    batterydiv = battery/1000
-    batterymod = battery%1000
-
-    print "Reading voltage... "
-
-    // Add preceding zeros. If the number after the decimal point is less than 3
-    // digits when printed the preceding zeros are ommitted and the significance
-    // changes. eg: battery = 12010. batterydiv = 12. batterymod = 015
-    // If we did not add preceding zeros the printed result would be 12.15 which
-    // is not the intented one (12.015).
-    if (count_integer_digits(batterymod)==2) then
-        SPRINT #Data$,integer.d' Batterydiv; ".0";batterymod; " V\n"
-        print Data$
-    elseif (count_integer_digits(batterymod)==1) then
-        SPRINT #Data$,integer.d' Batterydiv; ".00";batterymod; " V\n"
-        print Data$
-    else
-        print Batterydiv; "."; Batterymod; " V\n"
-    endif
-ENDSUB
-
 ONEVENT EVLORAMACJOINING            CALL LoramacJoining
 ONEVENT EVLORAMACJOINED             CALL LoramacJoined
 ONEVENT EVLORAMACJOINFAILED         CALL LoramacJoinFailed
@@ -115,21 +122,12 @@ ONEVENT EVTMR0                      CALL HandlerTimer0
 //==============================================================================
 // Main program
 
+// Set the ADC Pin to 1/3 scaling making the reference voltage 3.6Volts instead
+// of 1.2Volts.
+rc = GpioSetFunc(ADC_PIN,3,0x13)
+
 // Iniate join procedure using the Over the Air Activation.
 rc = LORAMACJoin(OTAA)
 
-// Set the ADC Pin to 1/3 scaling making the reference voltage 3.6Volts instead
-// of 1.2Volts.
-rc=GpioSetFunc(ADC_PIN,3,0x13)
-
-while 1
-    ADC_reading = GpioRead(ADC_PIN)
-
-    battery = convert_bat_from_ADC_reading(ADC_reading)
-    print_battery(battery)
-
-    SPRINT #Data$,integer.d' battery/1000
-
-    timerstart(0,60000,0)
-    WAITEVENT
-endwhile
+rc = HandlerTimer0()
+WAITEVENT

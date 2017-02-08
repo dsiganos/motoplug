@@ -110,6 +110,12 @@ FUNCTION LoramacTxTimeout() As Integer
     print "Tx Timeout\n"
 ENDFUNC 1
 
+
+FUNCTION HandlerChange0()
+    print "A button has beeen pressed\n"
+    rc = HandlerTimer0()
+ENDFUNC 1
+
 ONEVENT EVLORAMACJOINING            CALL LoramacJoining
 ONEVENT EVLORAMACJOINED             CALL LoramacJoined
 ONEVENT EVLORAMACJOINFAILED         CALL LoramacJoinFailed
@@ -119,6 +125,7 @@ ONEVENT EVLORAMACTXTIMEOUT          CALL LoramacTxTimeout
 ONEVENT EVLORAMACTXDONE             CALL LoramacTxDone
 ONEVENT EVTMR0                      CALL HandlerTimer0
 
+ONEVENT EVGPIOCHAN0                 CALL HandlerChange0
 //==============================================================================
 // Main program
 
@@ -128,6 +135,8 @@ rc = GpioSetFunc(ADC_PIN,3,0x13)
 
 // Iniate join procedure using the Over the Air Activation.
 rc = LORAMACJoin(OTAA)
+// Bind the pressing of input pin 5 to event gpiochan0
+rc = gpiobindevent(0,5,1)
 
 rc = HandlerTimer0()
 WAITEVENT

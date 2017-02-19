@@ -13,14 +13,12 @@
 //SIO4 is connected to the CS line
 #define SPI_CS_PIN  4
 
-// Miliseconds in an hour
-#define HOUR 3600000
-
 DIM rc
 DIM ADC_reading
 DIM data$
 DIM Battery
 DIM i: i = 1
+DIM k: k = 0
 
 SUB initiate_spi()
     DIM handle
@@ -111,7 +109,7 @@ SUB print_battery(battery)
     endif
 ENDSUB
 
-FUNCTION HandlerTimer0()
+FUNCTION Read_send_data()
     ADC_reading = GpioRead(ADC_PIN)
 
     Battery = convert_bat_from_ADC_reading(ADC_reading)
@@ -121,7 +119,18 @@ FUNCTION HandlerTimer0()
     rc = LORAMACTxData(PORT,Data$, 0)
     print "frame count is ";i; "\n"
     i = i + 1
-    timerstart(0,HOUR,0)
+    print "starting timer of 1 hour\n"
+    timerstart(0,360000,0)
+ENDFUNC 1
+
+
+FUNCTION HandlerTimer0()
+    timerstart(0,360000,0)
+    k = k + 1
+    if k == 10 then
+        rc = Read_send_data()
+        k = 0
+    endif
 ENDFUNC 1
 
 FUNCTION LoramacJoining() As Integer
@@ -195,7 +204,7 @@ ENDFUNC 1
 
 FUNCTION HandlerChange0()
     print "A button has beeen pressed\n"
-    rc = HandlerTimer0()
+    rc = Read_send_data()
 ENDFUNC 1
 
 ONEVENT EVLORAMACJOINING            CALL LoramacJoining
@@ -223,5 +232,5 @@ rc = LORAMACJoin(OTAA)
 // Bind the pressing of input pin 5 to event gpiochan0
 rc = gpiobindevent(0,5,1)
 
-rc = HandlerTimer0()
+rc = Read_send_data()
 WAITEVENT

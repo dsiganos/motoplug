@@ -1,0 +1,201 @@
+'//******************************************************************************
+// Copyright (c) 2016, Laird
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+//
+// SPDX-License-Identifier:ISC
+'//
+'// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'// +++++                                                                      ++
+'// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+'// +++++  which consists of all characters up to the first . and excluding it ++
+'// +++++                                                                      ++
+'// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'//
+'// **Temperature Notifications**
+'//	This application notifies the temperature when the CCCD is written to.
+'//
+'//
+'//******************************************************************************
+
+'//******************************************************************************
+'// Definitions
+'//******************************************************************************
+
+'//******************************************************************************
+'// Library Import
+'//******************************************************************************
+#include "lib/ble.sblib"
+
+'//******************************************************************************
+'// Global Variable Declarations
+'//******************************************************************************
+DIM i : i = 0
+DIM rc
+DIM addr$ : addr$ = ""
+DIM hSvc    //service handle
+DIM mdAttr 
+DIM mdCccd
+DIM mdSccd
+DIM chProp
+DIM attr1$
+DIM attr2$
+DIM hUuidS1   // handles for uuid of Service 1
+DIM hUuidC1  // handles for uuid of characteristic 1 in Service 1
+DIM hUuidC2  // handles for uuid of characteristic 2 in Service 1
+DIM dvcNme$ : dvcNme$ = "Laird Temp"
+DIM nmeWrtble : nmeWrtble = 0 //Device name will not be writable by peer
+DIM MinConnInt : MinConnInt = 500000        //Minimum acceptable connection interval is 0.5 seconds
+DIM MaxConnInt : MaxConnInt = 1000000       //Maximum acceptable connection interval is 1 second
+DIM ConnSupTO : ConnSupTO = 4000000        //Connection supervisory timeout is 4 seconds
+DIM sL : sL = 0
+DIM uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
+DIM tempIntvl : tempIntvl = 2000	//Interval for temperature measurements in ms
+DIM charVal$
+DIM ntfyEnabled : ntfyEnabled = 0
+
+'//******************************************************************************
+'// Debugging resources
+'//******************************************************************************
+sub AssertResCode(rc,byval msg$ as string)
+  if(rc!=0)then
+    print "\n";msg$;" failed with ";integer.h' rc
+  else
+    print "\n";msg$;" OK"
+  endif
+endsub
+
+'//******************************************************************************
+'// Function and Subroutine definitions
+'//******************************************************************************
+sub GattInit()
+	//Converts the Laird base UUID into a new service handle and initialize that service
+	uuid$ = StrDehexize$(uuid$)
+	hUuidS1 = BleHandleUuid128(uuid$)
+	rc = BleServiceNew(BLE_SERVICE_PRIMARY, hUuidS1, hSvc)
+	AssertResCode(rc, "BLE Service New")
+	
+	//Creates the first characteristic, which is used to send the temperatue value
+	mdAttr = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_NONE,10,0,rc)
+	AssertResCode(rc, "Characteristic value 1 Metadata")
+	mdCccd = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_OPEN,2,0,rc)
+	AssertResCode(rc, "Characteristic CCCD 1 Metadata")
+	mdSccd = BLE_CHAR_METADATA_ATTR_NOT_PRESENT
+	chProp = BLE_CHAR_PROPERTIES_NOTIFY + BLE_CHAR_PROPERTIES_READ
+	hUuidC1 = BleHandleUuidSibling(hUuidS1,0x2A6E)
+	rc = BleCharNew(chProp,hUuidC1,mdAttr,mdCccd,mdSccd)
+	AssertResCode(rc, "Characteristic 1 Creation")
+	attr1$ = "\00\00\00\00"
+	rc = BleCharCommit(hSvc,attr1$,hUuidC1)
+	
+	PRINT "\nService UUID: "; INTEGER.H' hUuidS1
+	PRINT "\nChar UUID: "; INTEGER.H' hUuidC1	
+endsub
+
+'//*******************************************************************************
+'//*******************************************************************************
+sub InitTempSensor()
+	TimerStart(0,tempIntvl,0)
+	print "Timer0 started"
+endsub
+
+'//******************************************************************************
+'// Handler definitions
+'//******************************************************************************
+FUNCTION HndlrBlrAdvTimOut() 
+   PRINT "\nAdvert stopped via timeout"
+   PRINT "\nRestaring"
+   rc = BleAdvertStart(0,addr$,25,0,0)
+	AssertResCode(rc, "Adverts")
+ENDFUNC 1
+
+'//*******************************************************************************
+'//*******************************************************************************
+FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) 
+    SELECT nMsgId
+        CASE 0
+            PRINT "\nBLE Connection ";nCtx;"\n"
+        CASE 1
+            PRINT "\nDisconnected ";nCtx;"\n"
+			rc = BleAdvertStart(0,addr$,25,0,0)
+			AssertResCode(rc, "Adverts")
+		CASE 5
+			PRINT "\nThermometer CCD value has changed. New value is ";nCtx
+            PRINT "\nConnection ";nCtx;" is now encrypted"
+        CASE 18
+            PRINT "\nConnection ";nCtx;" is now encrypted"
+        CASE 16
+            PRINT "\nConnected to a bonded master"
+        CASE 17
+            PRINT "\nA new pairing has replaced the old key";   
+        CASE ELSE
+            PRINT "\nUnknown Ble Msg"
+    ENDSELECT
+ENDFUNC 1
+
+'//*******************************************************************************
+'//*******************************************************************************
+function HandlerTimer0() as integer
+	//Prints and notifies the temperature value after the timer triggers
+	i = i + 1
+	print "\nval=" ; i  
+	sprint #attr1$, i 
+	//rc = BleCharValueNotIFy(hUuidC1,attr1$)
+	//Checks the status charVal to see if notifications have been requested and continues/stops
+	IF ntfyEnabled == 1 THEN
+		rc=BleCharValueNotify(hUuidC1,attr1$)
+		//rc = BleCharValueWrite(hUuidC2,attr1$)
+		TimerStart(0,tempIntvl,0)
+	ENDIF
+endfunc 1
+
+//*******************************************************************************
+// CCCD descriptor written handler
+//*******************************************************************************
+FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
+    DIM value$
+    IF charHandle==hUuidC1 THEN
+        IF nVal == 1 THEN
+            PRINT "\nNotifications have been enabled by client"
+            ntfyEnabled=1
+			InitTempSensor()
+            			
+        ELSEIF nVal == 0 THEN 
+            PRINT "\nNotifications been disabled by client"
+			ntfyEnabled=0
+			
+        ENDIF
+    //ELSE
+    //    PRINT "\nThis is for some other characteristic"
+	//	PRINT "\nnVal "; nVal
+    ENDIF
+ENDFUNC 1
+'//******************************************************************************
+'// Equivalent to main() in C
+'//******************************************************************************
+GattInit()
+rc=BleGapSvcInit(dvcNme$,nmeWrtble,BLE_APPEARANCE_GENERIC_THERMOMETER,MinConnInt,MaxConnInt,ConnSupTO,sL)
+AssertResCode(rc, "BLE GAP Init")
+rc = BleAdvertStart(0,addr$,25,0,0)
+AssertResCode(rc, "Adverts")
+
+'//------------------------------------------------------------------------------
+'// Wait for a synchronous event.
+'// An application can have multiple <WaitEvent> statements
+'//------------------------------------------------------------------------------
+ONEVENT  EVBLEMSG           CALL HndlrBleMsg
+ONEVENT  EVBLE_ADV_TIMEOUT  CALL HndlrBlrAdvTimOut
+ONEVENT  EVTMR0             CALL HandlerTimer0
+ONEVENT  EVCHARCCCD			CALL HndlrCharCccd
+
+waitevent

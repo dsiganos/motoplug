@@ -1,0 +1,48 @@
+00
+demo
+
+OK
+>LAIRD RM186_PE9
+Found the BL600. Connecting ...
+01FF6CFD93AEAE, RSSI: -53
+Advertising data [hex]:
+  Length: 1, Type: 0x1, Value: 06
+
+
+ --- Connect: (0001FF00) handle=1
+Conn Interval 90000
+Conn Supervision Timeout 500000
+Conn Slave Latency 0
+
+Attempting to join the LoRa network
+
+EVFINDCHAR(hConn=0001FF00,hIncUuid=00000000,hVal=0,Props=00000000)
+Conn Interval 990000
+Conn Supervision Timeout 4000000
+Conn Slave Latency 0
+
+Joined the LoRa network
+Enable notification for BL600.
+
+EVATTRWRITE(hConn=0001FF00,handle=15,status=0)returned = 0
+
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=31)
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=32)LoRa TX Complete Event
+LoRa RX Complete Event
+
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=33)
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=34)LoRa TX Complete Event
+LoRa RX Complete Event
+
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=35)
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=36)
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=37)
+EVATTRNOTIFY()
+ >BleGattcNotifyRead(hConn=0001FF00,handle=14,Dumped=0,data=38

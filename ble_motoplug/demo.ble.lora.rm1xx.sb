@@ -21,6 +21,11 @@
 // at+cfgex 1000 "dd9c860da9467770"
 // at+cfgex 1002 "9f20a1ef958d8628cd83cb66ee9e617a"
 
+// Packet Storms TTN credentials
+// at+cfgex 1010 "70B3D57EF0001D77"
+// at+cfgex 1011 "00A7C9467F0EE99A"
+// at+cfgex 1012 "BF911537ED69853149BF40EE488A8A29"
+
 //License board #4 for BLE
 // AT+LIC "85F28E578FEFB62DC8AA"
 

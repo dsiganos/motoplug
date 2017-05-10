@@ -54,7 +54,6 @@
 #define LORA_CONNECTED						((1)<<1)
 #define LORA_WAITING_FOR_ACK				((1)<<2)
 
-#define TI_SENSORTAG_SENSOR                 1
 #define BL600_TEMP_SENSOR                   2
 
 //******************************************************************************
@@ -92,14 +91,6 @@ sub DbgMsg(byval msg$ as string)
     print "\n";msg$
   endif
 endsub
-
-//******************************************************************************
-// Library Import
-//******************************************************************************
-
-//******************************************************************************
-// Debugging resource after libs
-//******************************************************************************
 
 //******************************************************************************
 // Global Variable Declarations
@@ -226,16 +217,6 @@ sub UartRsp(rsp as integer)
   endif
   urts = rsp
 endsub
-
-//==============================================================================
-//==============================================================================
-function InitiateTableMap(hConn)
-  rc = BleDiscServiceFirst(hConn,0,0)
-  if rc==0 then
-    gcState=1
-    exitfunc -1
-  endif
-endfunc rc
 //==============================================================================
 //==============================================================================
 sub TerminateTableMap(rc)
@@ -247,30 +228,6 @@ sub TerminateTableMap(rc)
   UartRsp(rc)
 endsub
 //==============================================================================
-
-//-------------------------------------------------------------------------
-sub UartMsg(msg$)
-  dim rc
-	rc = uartwrite(msg$)
-endsub
-//-------------------------------------------------------------------------
-//-------------------------------------------------------------------------
-sub UartDecimalMsg(val)
-  dim rc
-	dim msg$
-	sprint #msg$,val
-	msg$ = "\n"+msg$
-	rc = uartwrite(msg$)
-endsub
-//-------------------------------------------------------------------------
-//-------------------------------------------------------------------------
-sub UartHexMsg(val)
-  dim rc
-	dim msg$
-	sprint #msg$,integer.h' val
-	msg$ = "\n"+msg$
-	rc = uartwrite(msg$)
-endsub
 
 //-------------------------------------------------------------------------
 // Start the RM1xx demo once we're connected to BLE device and LoRa network
@@ -303,12 +260,6 @@ function startDemo()
 //******************************************************************************
 
 //==============================================================================
-// This handler is called when data has arrived at the serial port
-//==============================================================================
-function HandlerUartRxCmd() as integer
-endfunc 1
-
-//==============================================================================
 // This handler is called when there is an advert timeout
 //==============================================================================
 function HandlerBlrAdvTimOut() as integer
@@ -320,6 +271,7 @@ endfunc 1
 //==============================================================================
 //This handler will be called when an advert report is received
 FUNCTION HandlerAdvRpt()
+    print "HandlerAdvRpt\n"
     DIM periphAddr$, advData$, nRssi, ADval$, TmpStr$, TmpStr2$, TmpVal
     //Read all cached advert reports
     looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
@@ -340,13 +292,13 @@ FUNCTION HandlerAdvRpt()
 		rc = BLEGETADBYTAG(advData$, 8, TmpStr$)
 		if (rc == 0) then
 			//Name found at index 0x08
-			PRINT TmpStr$;"8\n"
+			PRINT TmpStr$;"\n"
 		else
 			//Name not found at index 0x08, check 0x09
 			rc = BLEGETADBYTAG(advData$, 9, TmpStr$)
 			if (rc == 0) then
 				//Name found at index 0x09
-				PRINT TmpStr$;"9\n"
+				PRINT TmpStr$;"\n"
 			endif
 		endif
         
@@ -407,6 +359,7 @@ ENDFUNC 1
 //==============================================================================
 //==============================================================================
 function HandlerFindChar(hConn,cProp,hVal,hiUuid) as integer
+    print " HandlerFindChar\n"
   print "\nEVFINDCHAR("
   print "hConn=";integer.h' hConn;",hIncUuid=";integer.h' hiUuid
   print ",hVal=";hVal;",Props=";integer.h' cProp;")"
@@ -457,6 +410,7 @@ endfunc 1
 // This handler is called when there is a BLE message
 //==============================================================================
 function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
+    print "HndlrBleMsg"
   dim hz
   dim atHandle, at$
   dim rc,uHndl,sIdx,cIdx,baseUuid$,uHndS$,uHndS,uHndC
@@ -527,107 +481,10 @@ function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
     DbgMsgVal("Unknown Ble Msg", nMsgId)
   endselect
 endfunc 1
-
-
-//==============================================================================
-//handler to service button 0 pressed
-//==============================================================================
-FUNCTION HndlrBtn1Pr() AS INTEGER
-	print "button 1 pressed\n"
-    //just exit and stop waiting for events
-ENDFUNC 0
-
-
-//==============================================================================
-//==============================================================================
-function HandlerPrimSvc(hConn,hUuid,hStart,hEnd) as integer
-  select gcState
-  case 0
-    print "\nEVDISCPRIMSVC("
-    print "hConn=";integer.h' hConn;",hUuid=";integer.h' hUuid
-    print ",hStart=";hStart;",hEnd=";hEnd;")"
-    
-  case 1  //tablemapping
-    if hStart!=0 then
-      // S: hStart,(hEnd),hUuid
-      print "\nS:";hStart;" ,(";hEnd;") ,";integer.h' hUuid
-      // and get all characteristics of this service
-      rc=BleDiscCharFirst(hConn,0,hStart,hEnd)
-      if rc!=0 then
-        TerminateTableMap(rc)
-      endif
-    else
-      //reached end of remote gatt table
-      TerminateTableMap(0)
-    endif
-    
-  case else
-  endselect
-endfunc 1
-
-//==============================================================================
-//==============================================================================
-function HandlerCharDisc(hConn,hUuid,cProp,hVal,hiUuid) as integer
-  select gcState
-  case 0
-    print "\nEVDISCCHAR("
-    print "hConn=";integer.h' hConn;",hCharUuid=";integer.h' hUuid;",hIncUuid=";hiUuid
-    print ",hVal=";hVal;",Props=";integer.h' cProp;")"
-    
-  case 1  //tablemapping
-    if hVal!=0 then
-      // C: hVal,cProp,hUuid,hiUuid
-      print "\n C:";hVal;" ,";integer.h' cProp;" ,";integer.h' hUuid;" ,";hiUuid
-      // and get all descriptors of this characteristics
-      rc=BleDiscDescFirst(hConn,0,hVal)
-      if rc!=0 then
-        TerminateTableMap(rc)
-      endif
-    else
-      //no more chars in this service, so go for next service
-      rc = BleDiscServiceNext(hConn)
-      if rc!=0 then
-        TerminateTableMap(rc)
-      endif
-    endif
-
-  case else
-  endselect
-endfunc 1
-
-//==============================================================================
-//==============================================================================
-function HandlerDescDisc(hConn,hUuid,hDesc) as integer
-  select gcState
-  case 0
-    print "\nEVDISCDESC("
-    print "hConn=";integer.h' hConn;",hDescUuid=";integer.h' hUuid;",hDesc=";hDesc;")"
-    
-  case 1  //tablemapping
-    if hDesc!=0 then
-      // D: hDesc,hUuid
-      print "\n  D:";hDesc;" ,";integer.h' hUuid
-    endif
-    // and get all descriptors of this characteristics
-    rc=BleDiscDescNext(hConn)
-    if rc!=0 then
-      //no more descc in this char, so go for next char
-      rc = BleDiscCharNext(hConn)
-      if rc!=0 then
-        rc = BleDiscServiceNext(hConn)
-        if rc!=0 then
-          TerminateTableMap(rc)
-        endif
-      endif
-    endif
-    
-  case else
-  endselect
-endfunc 1
-
 //==============================================================================
 //==============================================================================
 function HandlerFindDesc(hConn,hDesc) as integer
+    print "HandlerFindDesc\n"
   print "\nEVFINDDESC("
   print "hConn=";integer.h' hConn;",hDesc=";hDesc;")"
 endfunc 1
@@ -635,12 +492,14 @@ endfunc 1
 //==============================================================================
 //==============================================================================
 function HandlerAttrWrite(hConn,aHndl,nSts) as integer
+    print "HandlerAttrWrite\n"
     print "\nEVATTRWRITE(hConn=";integer.h' hConn;",handle=";aHndl;",status=";nSts;")"
 endfunc 0
 
 //==============================================================================
 //==============================================================================
 function HandlerAttrRead(hConn,hAttr,nSts) as integer
+    print "HandlerAttrRead\n"
   dim a$,ofst
   dim temp$  
   print "\nEVATTRREAD(hConn=";hConn;",handle=";hAttr;",status=";nSts;")"
@@ -658,6 +517,7 @@ endfunc 1
 //==============================================================================
 //==============================================================================
 function HandlerAttrNtfyCmd() as integer
+    print " HandlerAttrNtfyCmd\n"
   dim hConn,hAttr,att$,dscd
   dim lumoVal
   print "\nEVATTRNOTIFY()"
@@ -702,23 +562,15 @@ endfunc 1
 //------------------------------------------------------------------------------
 // Enable synchronous event handlers
 //------------------------------------------------------------------------------
-OnEvent  EVUARTRX                 call HandlerUartRxCmd
-
 OnEvent  EVBLE_ADV_TIMEOUT        call HandlerBlrAdvTimOut
 OnEvent  EVBLE_ADV_REPORT         call HandlerAdvRpt
 
-
-ONEVENT  EVGPIOCHAN1              CALL HndlrBtn1Pr
-
 ONEVENT  EVBLEMSG           	  CALL HndlrBleMsg
 
-OnEvent  EVDISCPRIMSVC            call HandlerPrimSvc
-OnEvent  EVDISCCHAR               call HandlerCharDisc
-OnEvent  EVDISCDESC               call HandlerDescDisc
 OnEvent  EVFINDCHAR               call HandlerFindChar
 OnEvent  EVFINDDESC               call HandlerFindDesc
 OnEvent  EVATTRWRITE              call HandlerAttrWrite
-OnEvent  EVATTRREAD               call HandlerAttrRead
+//OnEvent  EVATTRREAD               call HandlerAttrRead
 OnEvent  EVATTRNOTIFY			  call HandlerAttrNtfyCmd
 
 OnEvent  EVLORAMACTXCOMPLETE      call HandlerLoRaTxComp

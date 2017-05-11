@@ -29,10 +29,6 @@
 '//******************************************************************************
 
 '//******************************************************************************
-'// Definitions
-'//******************************************************************************
-
-'//******************************************************************************
 '// Library Import
 '//******************************************************************************
 #include "lib/ble.sblib"
@@ -49,7 +45,6 @@ DIM mdCccd
 DIM mdSccd
 DIM chProp
 DIM attr1$
-DIM attr2$
 DIM hUuidS1   // handles for uuid of Service 1
 DIM hUuidC1  // handles for uuid of characteristic 1 in Service 1
 DIM hUuidC2  // handles for uuid of characteristic 2 in Service 1
@@ -68,95 +63,95 @@ DIM ntfyEnabled : ntfyEnabled = 0
 '// Debugging resources
 '//******************************************************************************
 sub AssertResCode(rc,byval msg$ as string)
-  if(rc!=0)then
-    print "\n";msg$;" failed with ";integer.h' rc
-  else
-    print "\n";msg$;" OK"
-  endif
+    if(rc!=0)then
+        print "\n";msg$;" failed with ";integer.h' rc
+    else
+        print "\n";msg$;" OK"
+    endif
 endsub
 
 '//******************************************************************************
 '// Function and Subroutine definitions
 '//******************************************************************************
 sub GattInit()
-	//Converts the Laird base UUID into a new service handle and initialize that service
-	uuid$ = StrDehexize$(uuid$)
-	hUuidS1 = BleHandleUuid128(uuid$)
-	rc = BleServiceNew(BLE_SERVICE_PRIMARY, hUuidS1, hSvc)
-	AssertResCode(rc, "BLE Service New")
-	
-	//Creates the first characteristic, which is used to send the temperatue value
-	mdAttr = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_NONE,10,0,rc)
-	AssertResCode(rc, "Characteristic value 1 Metadata")
-	mdCccd = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_OPEN,2,0,rc)
-	AssertResCode(rc, "Characteristic CCCD 1 Metadata")
-	mdSccd = BLE_CHAR_METADATA_ATTR_NOT_PRESENT
-	chProp = BLE_CHAR_PROPERTIES_NOTIFY + BLE_CHAR_PROPERTIES_READ
-	hUuidC1 = BleHandleUuidSibling(hUuidS1,0x2A6E)
-	rc = BleCharNew(chProp,hUuidC1,mdAttr,mdCccd,mdSccd)
-	AssertResCode(rc, "Characteristic 1 Creation")
-	attr1$ = "\00\00\00\00"
-	rc = BleCharCommit(hSvc,attr1$,hUuidC1)
-	
-	PRINT "\nService UUID: "; INTEGER.H' hUuidS1
-	PRINT "\nChar UUID: "; INTEGER.H' hUuidC1	
+    //Converts the Laird base UUID into a new service handle and initialize that service
+    uuid$ = StrDehexize$(uuid$)
+    hUuidS1 = BleHandleUuid128(uuid$)
+    rc = BleServiceNew(BLE_SERVICE_PRIMARY, hUuidS1, hSvc)
+    AssertResCode(rc, "BLE Service New")
+
+    //Creates the first characteristic, which is used to send the temperatue value
+    mdAttr = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_NONE,10,0,rc)
+    AssertResCode(rc, "Characteristic value 1 Metadata")
+    mdCccd = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_OPEN,2,0,rc)
+    AssertResCode(rc, "Characteristic CCCD 1 Metadata")
+    mdSccd = BLE_CHAR_METADATA_ATTR_NOT_PRESENT
+    chProp = BLE_CHAR_PROPERTIES_NOTIFY + BLE_CHAR_PROPERTIES_READ
+    hUuidC1 = BleHandleUuidSibling(hUuidS1,0x2A6E)
+    rc = BleCharNew(chProp,hUuidC1,mdAttr,mdCccd,mdSccd)
+    AssertResCode(rc, "Characteristic 1 Creation")
+    attr1$ = "\00\00\00\00"
+    rc = BleCharCommit(hSvc,attr1$,hUuidC1)
+
+    PRINT "\nService UUID: "; INTEGER.H' hUuidS1
+    PRINT "\nChar UUID: "; INTEGER.H' hUuidC1	
 endsub
 
 '//*******************************************************************************
 '//*******************************************************************************
 sub InitTempSensor()
-	TimerStart(0,tempIntvl,0)
-	print "Timer0 started"
+    TimerStart(0,tempIntvl,0)
+    print "Timer0 started\n"
 endsub
 
 '//******************************************************************************
 '// Handler definitions
 '//******************************************************************************
 FUNCTION HndlrBlrAdvTimOut() 
-   PRINT "\nAdvert stopped via timeout"
-   PRINT "\nRestaring"
-   rc = BleAdvertStart(0,addr$,25,0,0)
-	AssertResCode(rc, "Adverts")
+    PRINT "\nAdvert stopped via timeout"
+    PRINT "\nRestaring"
+    rc = BleAdvertStart(0,addr$,25,0,0)
+    AssertResCode(rc, "Adverts")
 ENDFUNC 1
 
 '//*******************************************************************************
 '//*******************************************************************************
 FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) 
     SELECT nMsgId
-        CASE 0
-            PRINT "\nBLE Connection ";nCtx;"\n"
-        CASE 1
-            PRINT "\nDisconnected ";nCtx;"\n"
-			rc = BleAdvertStart(0,addr$,25,0,0)
-			AssertResCode(rc, "Adverts")
-		CASE 5
-			PRINT "\nThermometer CCD value has changed. New value is ";nCtx
-            PRINT "\nConnection ";nCtx;" is now encrypted"
-        CASE 18
-            PRINT "\nConnection ";nCtx;" is now encrypted"
-        CASE 16
-            PRINT "\nConnected to a bonded master"
-        CASE 17
-            PRINT "\nA new pairing has replaced the old key";   
-        CASE ELSE
-            PRINT "\nUnknown Ble Msg"
+    CASE 0
+        PRINT "\nBLE Connection ";nCtx;"\n"
+    CASE 1
+        PRINT "\nDisconnected ";nCtx;"\n"
+        rc = BleAdvertStart(0,addr$,25,0,0)
+        AssertResCode(rc, "Adverts")
+    CASE 5
+        PRINT "\nThermometer CCD value has changed. New value is ";nCtx
+    CASE 18
+        PRINT "\nConnection ";nCtx;" is now encrypted"
+    CASE 16
+        PRINT "\nConnected to a bonded master"
+    CASE 17
+        PRINT "\nA new pairing has replaced the old key";   
+    CASE ELSE
+        PRINT "\nUnknown Ble Msg"
     ENDSELECT
 ENDFUNC 1
 
 '//*******************************************************************************
 '//*******************************************************************************
 function HandlerTimer0() as integer
-	//Prints and notifies the temperature value after the timer triggers
-	i = i + 1
-	print "\nval=" ; i  
-	sprint #attr1$, i 
-	//rc = BleCharValueNotIFy(hUuidC1,attr1$)
-	//Checks the status charVal to see if notifications have been requested and continues/stops
-	IF ntfyEnabled == 1 THEN
-		rc=BleCharValueNotify(hUuidC1,attr1$)
-		//rc = BleCharValueWrite(hUuidC2,attr1$)
-		TimerStart(0,tempIntvl,0)
-	ENDIF
+    //Prints and notifies the temperature value after the timer triggers
+    i = i + 1
+    print "\nval=" ; i
+    sprint #attr1$, i
+    //rc = BleCharValueNotIFy(hUuidC1,attr1$)
+    //Checks the status charVal to see if notifications have been requested and continues/stops
+
+    IF ntfyEnabled == 1 THEN
+        rc=BleCharValueNotify(hUuidC1,attr1$)
+        //rc = BleCharValueWrite(hUuidC2,attr1$)
+        TimerStart(0,tempIntvl,0)
+    ENDIF
 endfunc 1
 
 //*******************************************************************************
@@ -168,16 +163,15 @@ FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
         IF nVal == 1 THEN
             PRINT "\nNotifications have been enabled by client"
             ntfyEnabled=1
-			InitTempSensor()
-            			
+            InitTempSensor()
+
         ELSEIF nVal == 0 THEN 
             PRINT "\nNotifications been disabled by client"
-			ntfyEnabled=0
-			
+            ntfyEnabled=0
         ENDIF
     //ELSE
     //    PRINT "\nThis is for some other characteristic"
-	//	PRINT "\nnVal "; nVal
+    //    PRINT "\nnVal "; nVal
     ENDIF
 ENDFUNC 1
 '//******************************************************************************

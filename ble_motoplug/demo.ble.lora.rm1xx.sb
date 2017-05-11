@@ -281,21 +281,6 @@ function startDemo()
    dim atHndl
    
     select sensorType
-    case TI_SENSORTAG_SENSOR
-        // Configure the Luxometer sensor
-        // Enable notification with "01:00"
-        print"Enable notification.\n"
-        atHndl=66
-        at$="\01\00"
-        rc = BleGattcWrite(hc[1],atHndl,at$)
-        waitevent
-        print"returned = ";rc;"\n"
-        // Enable sensor and start measurements with "01"
-        print"Enable sensor\n"
-        atHndl=68
-        at$="\01"
-        rc = BleGattcWrite(hc[1],atHndl,at$)
-
     case BL600_TEMP_SENSOR
         print"Enable notification for BL600.\n"
 		atHndl = 15
@@ -365,14 +350,7 @@ FUNCTION HandlerAdvRpt()
 			endif
 		endif
         
-		if (strcmp(TmpStr$, "LAIRD RM18ddd6_PE")==0) then
-				print "Found the rm186 Bravo George!!!. Connecting ...\n"
-                sensorType = TI_SENSORTAG_SENSOR
-				//Connect to the SensorTag
-				rc = BleConnectCancel()
-				print "Found the TI SensorTag. Connecting ...\n"
-				rc = BleConnect(periphAddr$, 5000, 7500, 100000, 500000)
-		elseif (strcmp(TmpStr$, "LAIRD RM186_PE")==0) then
+		if (strcmp(TmpStr$, "LAIRD RM186_PE")==0) then
                 sensorType = BL600_TEMP_SENSOR
 				//Connect to the BL600 Temp Sensor
 				rc = BleConnectCancel()

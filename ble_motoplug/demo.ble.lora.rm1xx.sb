@@ -650,7 +650,7 @@ function HandlerAttrRead(hConn,hAttr,nSts) as integer
       print "\n >BleGattcReadData(data=";StrHexize$(a$);",offset=";ofst;")"
       print "\n                  (data=";StrEscape$(a$);")"
       temp$ = "Temperature = "+StrEscape$(a$)+" degrees C\n"
-      rc = LORAMACTxData(1, temp$, 1)
+      //rc = LORAMACTxData(1, temp$, 1)
     endif
   endif        
   
@@ -674,12 +674,12 @@ function HandlerAttrNtfyCmd() as integer
 			lumoVal = (((StrHex2Bin(lumoLast$,2))<<8)+(StrHex2Bin(lumoLast$,0)))
 			sprint #lumoLast$,"Luminosity reading = ";lumoVal;"\n"
 			print lumoLast$
-            rc = LORAMACTxData(1, lumoLast$, 1)
+            //rc = LORAMACTxData(1, lumoLast$, 1)
 		endif
 		
 		if hAttr == 14 then
 		// BL600 Temp reading
-		   rc = LORAMACTxData(1, att$, 1)
+		   //rc = LORAMACTxData(1, att$, 1)
 		endif
 		
 	endif

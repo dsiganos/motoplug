@@ -1,0 +1,26 @@
+This howto explains how to dump the GATT table of a BLE device
+using the cmd example script provided by Laird here:
+https://github.com/LairdCP/RM1xx-Applications/blob/master/cmd.loramac.rm1xx.sb
+
+# Do a scan
+ble_scan start 5000 0
+
+# Connect to a device
+ble_connect 01FF6CFD93AEAE 5000 7500 100000 500000
+
+# allocate gatt resources
+gattc open 0 0
+
+# interogate and dump the gatt table
+gattc tablemap 1
+
+As a side note, this is how to to walk te services
+gattc svc first 1 0 0
+gattc svc next 1
+gattc svc next 1
+gattc svc next 1
+
+And this is how to walk the descriptors
+gattc desc first 1 0 0
+gattc desc next 1
+gattc desc next 1

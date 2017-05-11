@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 from bluepy.btle import Peripheral, Scanner, DefaultDelegate
 
 class ScanDelegate(DefaultDelegate):

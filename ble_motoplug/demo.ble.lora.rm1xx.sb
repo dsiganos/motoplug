@@ -467,6 +467,10 @@ function HandlerAttrNtfyCmd() as integer
             print "hConn=";integer.h' hConn;",handle=";hAttr;",Dumped=";dscd
             print ",data=";StrHexize$(att$);")"
         endif
+        if hAttr == 14 then
+            // BL600 Temp reading
+            //rc = LORAMACTxData(1, att$, 1)
+        endif
     dowhile rc==0
 endfunc 1
 

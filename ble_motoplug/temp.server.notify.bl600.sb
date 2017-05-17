@@ -190,6 +190,6 @@ AssertResCode(rc, "Adverts")
 ONEVENT  EVBLEMSG           CALL HndlrBleMsg
 ONEVENT  EVBLE_ADV_TIMEOUT  CALL HndlrBlrAdvTimOut
 ONEVENT  EVTMR0             CALL HandlerTimer0
-ONEVENT  EVCHARCCCD			CALL HndlrCharCccd
+ONEVENT  EVCHARCCCD         CALL HndlrCharCccd
 
 waitevent

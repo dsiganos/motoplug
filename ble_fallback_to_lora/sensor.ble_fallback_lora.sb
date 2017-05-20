@@ -1,0 +1,349 @@
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++                                                                      ++
+// +++++  When UwTerminal downloads the app it will store it as a filenname   ++
+// +++++  which consists of all characters up to the first . and excluding it ++
+// +++++                                                                      ++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#include "RM1xx-defs.h"
+#include "lib/ble.sblib"
+
+#define ONE_MINUTE 60000    // There are 60000 miliseconds in a minute
+#define ONE_SECOND 1000     // There are 1000 milliseconds in a second
+#define OTAA 1              // Method of activation (Over The Air Activation)
+#define SPI_CS_PIN  4       //SIO4 is connected to the CS line
+#define NO_CONFIRMATION 0
+
+// The battery positive is connected to the SIO_6/AIN Pin. (ADC pin)
+#define ADC_PIN 6
+
+// Port to transmit data to the Lora Gateway(Anything in the 1-223 range,
+// application specific)
+#define PORT 5
+
+
+
+
+
+//******************************************************************************
+// Global Variable Declarations
+//******************************************************************************
+DIM rc
+DIM addr$ : addr$ = ""
+DIM hSvc    //service handle
+DIM mdAttr 
+DIM mdCccd
+DIM mdSccd
+DIM chProp
+DIM attr1$
+DIM hUuidS1   // handles for uuid of Service 1
+DIM hUuidC1  // handles for uuid of characteristic 1 in Service 1
+DIM hUuidC2  // handles for uuid of characteristic 2 in Service 1
+DIM dvcNme$ : dvcNme$ = "Laird Temp"
+DIM nmeWrtble : nmeWrtble = 0 //Device name will not be writable by peer
+DIM MinConnInt : MinConnInt = 500000        //Minimum acceptable connection interval is 0.5 seconds
+DIM MaxConnInt : MaxConnInt = 1000000       //Maximum acceptable connection interval is 1 second
+DIM ConnSupTO : ConnSupTO = 4000000        //Connection supervisory timeout is 4 seconds
+DIM sL : sL = 0
+DIM uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
+DIM charVal$
+DIM ntfyEnabled : ntfyEnabled = 0
+DIM connected : connected = 0 // This will show if there has been a connection
+DIM seconds : seconds = 0
+DIM minutes : minutes = 0
+DIM hours : hours = 0
+DIM data$
+
+DIM ADC_reading
+DIM Battery
+DIM i: i = 1
+DIM k: k = 0
+
+//******************************************************************************
+// Debugging resources
+//******************************************************************************
+sub AssertResCode(rc,byval msg$ as string)
+    if(rc!=0) then
+        print "\n";msg$;" failed with ";integer.h' rc
+    else
+        print "\n";msg$;" OK"
+    endif
+endsub
+
+//******************************************************************************
+// Function and Subroutine definitions
+//******************************************************************************
+sub GattInit()
+    //Converts the Laird base UUID into a new service handle and initialize that service
+    uuid$ = StrDehexize$(uuid$)
+    hUuidS1 = BleHandleUuid128(uuid$)
+    rc = BleServiceNew(BLE_SERVICE_PRIMARY, hUuidS1, hSvc)
+    AssertResCode(rc, "BLE Service New")
+
+    //Creates the first characteristic, which is used to send the temperatue value
+    mdAttr = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_NONE,10,0,rc)
+    AssertResCode(rc, "Characteristic value 1 Metadata")
+    mdCccd = BleAttrMetadataEx(BLE_ATTR_ACCESS_OPEN,BLE_ATTR_ACCESS_OPEN,2,0,rc)
+    AssertResCode(rc, "Characteristic CCCD 1 Metadata")
+    mdSccd = BLE_CHAR_METADATA_ATTR_NOT_PRESENT
+    chProp = BLE_CHAR_PROPERTIES_NOTIFY + BLE_CHAR_PROPERTIES_READ
+    hUuidC1 = BleHandleUuidSibling(hUuidS1,0x2A6E)
+    rc = BleCharNew(chProp,hUuidC1,mdAttr,mdCccd,mdSccd)
+    AssertResCode(rc, "Characteristic 1 Creation")
+    attr1$ = "\00\00\00\00"
+    rc = BleCharCommit(hSvc,attr1$,hUuidC1)
+
+    PRINT "\nService UUID: "; INTEGER.H' hUuidS1
+    PRINT "\nChar UUID: "; INTEGER.H' hUuidC1	
+endsub
+
+//******************************************************************************
+// Handler definitions
+//******************************************************************************
+FUNCTION HndlrBlrAdvTimOut() 
+    PRINT "\nAdvert stopped via timeout"
+    PRINT "\nRestaring"
+    rc = BleAdvertStart(0,addr$,25,0,0)
+    AssertResCode(rc, "Adverts")
+ENDFUNC 1
+
+//*******************************************************************************
+//*******************************************************************************
+FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) 
+    SELECT nMsgId
+    CASE 0
+        PRINT "\nBLE Connection ";nCtx;"\n"
+    CASE 1
+        PRINT "\nDisconnected ";nCtx;"\n"
+        rc = BleAdvertStart(0,addr$,25,0,0)
+        AssertResCode(rc, "Adverts")
+    CASE 5
+        PRINT "\nThermometer CCD value has changed. New value is ";nCtx
+    CASE 18
+        PRINT "\nConnection ";nCtx;" is now encrypted"
+    CASE 16
+        PRINT "\nConnected to a bonded master"
+    CASE 17
+        PRINT "\nA new pairing has replaced the old key";   
+    CASE ELSE
+        PRINT "\nUnknown Ble Msg"
+    ENDSELECT
+ENDFUNC 1
+
+//*******************************************************************************
+// CCCD descriptor written handler
+//*******************************************************************************
+FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
+    DIM value$
+    IF charHandle==hUuidC1 THEN
+        IF nVal == 1 THEN
+            PRINT "\nNotifications have been enabled by client"
+            ntfyEnabled=1
+
+        ELSEIF nVal == 0 THEN 
+            PRINT "\nNotifications been disabled by client"
+            ntfyEnabled=0
+        ENDIF
+    //ELSE
+    //    PRINT "\nThis is for some other characteristic"
+    //    PRINT "\nnVal "; nVal
+    ENDIF
+ENDFUNC 1
+
+FUNCTION count_integer_digits(number) As Integer
+// Receives a number and returns the number of digits
+// The number is expected to be an integer in decimal format.
+    DIM count
+    count = 0
+    while(number != 0)
+        number = number/10
+        count = count + 1
+    endwhile
+ENDFUNC count
+
+FUNCTION convert_bat_from_ADC_reading(ADC_read)
+    //ADC sensitivity equation:
+    // 2^n/Reference Voltage = ADC reading/Analog Voltage
+    //1024/3.6 = ADC reading/Analog Voltage
+    // Analog Voltage = ADC reading * 3.6 / 1024
+    // Fixed point arithmetic: multiplied by 100
+    battery = (ADC_read*360)/1024
+
+    // Used voltage divider to supply voltage to the ADC pin because it cannot
+    // handle voltages in the 10 - 16 range.
+    // The resistances used are 1 KOhm and 12.5 KOhm. The output voltage is:
+    //Vout = R1+ (Vin /R1+R2) --> Vout = 13.5*Vin
+    // Fixed point arithmetic: multiplied by 10
+    battery = battery *135
+ENDFUNC battery
+
+SUB sprint_battery(battery)
+    DIM Batterydiv
+    DIM Batterymod
+
+    // Convert fixed point to decimal point.
+    batterydiv = battery/1000
+    batterymod = battery%1000
+
+    // Add preceding zeros. If the number after the decimal point is less than 3
+    // digits when printed the preceding zeros are ommitted and the significance
+    // changes. eg: battery = 12010. batterydiv = 12. batterymod = 015
+    // If we did not add preceding zeros the printed result would be 12.15 which
+    // is not the intented one (12.015).
+    if (count_integer_digits(batterymod)==2) then
+        SPRINT #Data$,integer.d' Batterydiv; ".0";batterymod; " V\n"
+    elseif (count_integer_digits(batterymod)==1) then
+        SPRINT #Data$,integer.d' Batterydiv; ".00";batterymod; " V\n"
+    else
+        SPRINT #Data$,integer.d' Batterydiv; batterymod; " V\n"
+    endif
+ENDSUB
+
+FUNCTION Read_data()
+    ADC_reading = GpioRead(ADC_PIN)
+
+    Battery = convert_bat_from_ADC_reading(ADC_reading)
+    sprint_battery(battery)
+ENDFUNC 1
+
+FUNCTION send_data()
+    rc = LORAMACTxData(PORT,Data$, NO_CONFIRMATION)
+ENDFUNC 1
+
+sub once_a_second()
+    rc = Read_data()
+endsub
+
+sub once_an_hour()
+    IF ntfyEnabled == 1 THEN
+        rc=BleCharValueNotify(hUuidC1,data$)
+    ENDIF
+endsub
+
+sub once_a_day()
+    //check_if_there_was_a_ble_connection()
+
+    // Send data through lora
+    rc = LORAMACTxData(1, data$, 1)
+endsub
+
+function HandlerTimer0() as integer
+    once_a_second()
+    seconds = seconds + 1
+    if seconds == 6 then
+        seconds = 0
+        minutes = minutes + 1
+        if minutes == 6 then
+            minutes = 0
+            once_an_hour()
+            hours = hours + 1
+            if hours == 2 then
+                hours = 0
+                once_a_day()
+            endif
+        endif
+    endif
+    TimerStart(0,ONE_SECOND,0)
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is a LoRa TX Complete event
+//==============================================================================
+function HandlerLoRaTxComp() as integer
+    print "LoRa TX Complete Event\n"
+endfunc 1
+
+//==============================================================================
+// This handler is called when there is a LoRa RX Complete event
+//==============================================================================
+function HandlerLoRaRxComp() as integer
+    print "LoRa RX Complete Event\n"
+endfunc 1
+
+//==============================================================================
+// This handler is called when the LoRa Join procedure starts
+//==============================================================================
+function HandlerLoRaJoining() as integer
+    print "Attempting to join the LoRa network\n"
+endfunc 1
+
+//==============================================================================
+// This handler is called when the LoRa Join Process completes successfully
+//==============================================================================
+function HandlerLoRaJoined() as integer
+    print "Joined the LoRa network\n"
+endfunc 1
+
+SUB initiate_spi()
+    DIM handle
+    DIM wr$
+    DIM rd$
+    // Configure the Chip Select line
+    // Set SPI_CS_PIN to be a digital output with a weak pull down resistance.
+    rc=GpioSetFunc(SPI_CS_PIN,2,1)
+
+    // ensure CS is not enabled
+    GpioWrite(SPI_CS_PIN,1)
+
+    //-------------------------------------------------------------
+    //open the SPI interface
+    //  Mode CPOL CPHA
+    //    0   0   0
+    //    1   0   1
+    //    2   1   0
+    //    3   1   1
+    //-------------------------------------------------------------
+    rc=SpiOpen(0,125000,0,handle)
+    // Read op-code
+    // 0x41
+    // Write op-code
+    // 0x40
+    //
+    // Configure Inputs/Outputs by writing 0x00 to register 0x00
+    // IO7  IO6  IO5 IO4  IO3  IO2  IO1  IO0   // MCP23S08 pin
+    // n/a  n/a  n/a  n/a LED4 LED3 LED2 LED1  // RM1xx DVK pin
+    //  0    0    0   0    0    0    0    0    // 0=output 1=input
+    // I/O Direction (IODIR) Register 0x00
+    wr$="\40\00\00"
+    GpioWrite(SPI_CS_PIN,0)
+    rc=SpiWrite(wr$)
+    GpioWrite(SPI_CS_PIN,1)
+ENDSUB
+
+//******************************************************************************
+// Equivalent to main() in C
+//******************************************************************************
+initiate_spi()
+
+// Set the ADC Pin to 1/3 scaling making the reference voltage 3.6Volts instead
+// of 1.2Volts.
+rc = GpioSetFunc(ADC_PIN,3,0x13)
+
+// Iniate join procedure using the Over the Air Activation.
+rc = LORAMACJoin(OTAA)
+
+// Bind the pressing of input pin 5 to event gpiochan0
+rc = gpiobindevent(0,5,1)
+
+GattInit()
+rc=BleGapSvcInit(dvcNme$,nmeWrtble,BLE_APPEARANCE_GENERIC_THERMOMETER,MinConnInt,MaxConnInt,ConnSupTO,sL)
+AssertResCode(rc, "BLE GAP Init")
+rc = BleAdvertStart(0,addr$,25,0,0)
+AssertResCode(rc, "Adverts")
+TimerStart(0,ONE_SECOND,0)
+
+//------------------------------------------------------------------------------
+// Wait for a synchronous event.
+// An application can have multiple <WaitEvent> statements
+//------------------------------------------------------------------------------
+ONEVENT  EVBLEMSG                   CALL HndlrBleMsg
+ONEVENT  EVBLE_ADV_TIMEOUT          CALL HndlrBlrAdvTimOut
+ONEVENT  EVTMR0                     CALL HandlerTimer0
+ONEVENT  EVCHARCCCD                 CALL HndlrCharCccd
+
+ONEVENT  EVLORAMACTXCOMPLETE        CALL HandlerLoRaTxComp
+ONEVENT  EVLORAMACRXCOMPLETE        CALL HandlerLoRaRxComp
+ONEVENT  EVLORAMACJOINING           CALL HandlerLoRaJoining
+ONEVENT  EVLORAMACJOINED            CALL HandlerLoRaJoined
+
+waitevent

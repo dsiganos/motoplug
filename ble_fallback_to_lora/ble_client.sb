@@ -364,13 +364,7 @@ function HandlerAttrNtfyCmd() as integer
     do
         rc=BleGattcNotifyRead(hConn,hAttr,att$,dscd)
         if rc==0 then
-            print "\n >BleGattcNotifyRead("
-            print "hConn=";integer.h' hConn;",handle=";hAttr;",Dumped=";dscd
-            print ",data=";StrHexize$(att$);")"
-        endif
-        if hAttr == 14 then
-            // BL600 Temp reading
-            //rc = LORAMACTxData(1, att$, 1)
+            print "Notification from connection handle: "; hAttr;" The data: ";att$;"\n"
         endif
     dowhile rc==0
 endfunc 1

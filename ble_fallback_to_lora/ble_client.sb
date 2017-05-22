@@ -14,7 +14,7 @@
 // Register Error Handler as early as possible
 //******************************************************************************
 sub HandlerOnErr()
-  print "\n\n\n\n This is the error function OnErr - ";GetLastError();"\n"
+  print "\n OnErr - ";GetLastError();"\n"
 endsub
 onerror next HandlerOnErr
 
@@ -73,7 +73,7 @@ dim uHndl
 dim tempHVal
 
 //******************************************************************************
-// Initialisse Global Variable
+// Initialise Global Variable
 //******************************************************************************
 
 ok$    = "\nOK"
@@ -83,9 +83,6 @@ pr$    = "\r\n>"
 urts=0 //not suspended
 handle=0
 
-//******************************************************************************
-// Function and Subroutine definitions
-//******************************************************************************
 //==============================================================================
 //release all connection handles
 //==============================================================================
@@ -173,13 +170,6 @@ function startDemo()
     waitevent
     print"returned = ";rc;"\n"
  endfunc rc
-//==============================================================================
-
-
-
-//******************************************************************************
-// Handler definitions
-//******************************************************************************
 
 //==============================================================================
 // This handler is called when there is an advert timeout
@@ -287,7 +277,6 @@ function HandlerFindChar(hConn,cProp,hVal,hiUuid) as integer
     print "hConn=";integer.h' hConn;",hIncUuid=";integer.h' hiUuid
     print ",hVal=";hVal;",Props=";integer.h' cProp;")"
     tempHVal = hVal
-        print "I can do this before I fail\n"
 endfunc 1
 
 //==============================================================================

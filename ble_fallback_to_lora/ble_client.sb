@@ -65,8 +65,6 @@ dim hc[NUM_OF_CONNS+1]      //contains connection handles
 dim conns                   //number of connections
 dim hcVsp                   //handle of connection to use for VSP service
 
-dim gcState                 // gatt client state, 0=IDLE, 1=TableMapping
-
 
 dim uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
 dim uHndl
@@ -151,7 +149,6 @@ ENDFUNC TmpStr$
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
 function startDemo()
-   dim reg
    dim at$
    dim atHndl
 
@@ -183,7 +180,7 @@ endfunc 1
 //==============================================================================
 FUNCTION HandlerAdvRpt()
     print "HandlerAdvRpt\n"
-    DIM periphAddr$, advData$, nRssi, ADval$, TmpStr$, TmpStr2$, TmpVal
+    DIM periphAddr$, advData$, nRssi, TmpStr$, TmpStr2$, TmpVal
     // Read all cached advert reports
     looprc=BleScanGetAdvReport(periphAddr$, advData$, TmpVal, nRssi)
 
@@ -285,8 +282,7 @@ endfunc 1
 function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
     print "HndlrBleMsg\n"
     dim hz
-    dim atHandle, at$, at1$
-    dim rc,uHndl,sIdx,cIdx,baseUuid$,uHndS$,uHndS,uHndC
+    dim rc,sIdx,cIdx,baseUuid$,uHndS$,uHndS,uHndC
     baseUuid$ = "569a0000b87f490c92cb11ba5ea5167c"
     print "Received a message with id " ;integer.h' nMsgId; "\n"
     select nMsgId
@@ -368,7 +364,6 @@ endfunc 0
 //==============================================================================
 function HandlerAttrNtfyCmd() as integer
     dim hConn,hAttr,att$,dscd
-    dim lumoVal
     print "EVATTRNOTIFY() HandlerAttrNtfyCmd\n"
     do
         rc=BleGattcNotifyRead(hConn,hAttr,att$,dscd)
@@ -387,8 +382,6 @@ endfunc 1
 //==============================================================================
 //==============================================================================
 function HandlerTimer0() as integer
-    dim atHndl
-    
     rc = BleGattcRead(hc[1],tempHVal,0)
 endfunc 1
 //==============================================================================

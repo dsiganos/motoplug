@@ -159,14 +159,11 @@ function startDemo()
         at$="\01\00"
         rc = BleGattcWrite(hc[1],atHndl,at$)
 
-
     case else
         DbgMsgVal("Unknown Sensor", sensorType)
     endselect  
 
-    waitevent
-    print"returned = ";rc;"\n"
- endfunc rc
+endfunc 1
 
 //==============================================================================
 // This handler is called when there is an advert timeout
@@ -301,7 +298,6 @@ function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
             hcVsp = hc[hz]
         endif
 
-
         uHndS$ = StrDehexize$(baseUuid$)
         uHndS = BleHandleUuid128(uHndS$)
         uHndC = BleHandleUuidSibling(uHnds,0x2A10)
@@ -309,7 +305,7 @@ function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
         cIdx = 0 //valHandle will be 32
         rc = BleGattcFindChar(nCtx,uHndS,sIdx,uHndC,cIdx)
 
-        rc=startDemo()
+        TimerStart(0,10000,0)
 
     case BLE_EVBLEMSGID_DISCONNECT
         hz = RelConnHandle(nCtx)
@@ -358,7 +354,7 @@ endfunc 1
 function HandlerAttrWrite(hConn,aHndl,nSts) as integer
     print "HandlerAttrWrite\n"
     print "\nEVATTRWRITE(hConn=";integer.h' hConn;",handle=";aHndl;",status=";nSts;")"
-endfunc 0
+endfunc 1
 
 //==============================================================================
 //==============================================================================
@@ -382,7 +378,8 @@ endfunc 1
 //==============================================================================
 //==============================================================================
 function HandlerTimer0() as integer
-    rc = BleGattcRead(hc[1],tempHVal,0)
+    rc = startDemo()
+    //rc = BleGattcRead(hc[1],tempHVal,0)
 endfunc 1
 //==============================================================================
 //==============================================================================

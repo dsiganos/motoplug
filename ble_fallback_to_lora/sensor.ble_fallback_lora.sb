@@ -12,6 +12,7 @@
 #define OTAA 1              // Method of activation (Over The Air Activation)
 #define SPI_CS_PIN  4       //SIO4 is connected to the CS line
 #define NO_CONFIRMATION 0
+#define HOURS_24 864000   // There are 86400000 milliseconds in 24 hours
 
 // The battery positive is connected to the SIO_6/AIN Pin. (ADC pin)
 #define ADC_PIN 6
@@ -50,11 +51,12 @@ DIM seconds : seconds = 0
 DIM minutes : minutes = 0
 DIM hours : hours = 0
 DIM data$
-
 DIM ADC_reading
 DIM Battery
 DIM i: i = 1
 DIM k: k = 0
+DIM starttick
+DIM elapsetime
 
 //******************************************************************************
 // Debugging resources
@@ -109,8 +111,11 @@ ENDFUNC 1
 FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) 
     SELECT nMsgId
     CASE 0
+        connected = 1
         PRINT "\nBLE Connection ";nCtx;"\n"
+        starttick = GetTickCount()
     CASE 1
+        connected = 0
         PRINT "\nDisconnected ";nCtx;"\n"
         rc = BleAdvertStart(0,addr$,25,0,0)
         AssertResCode(rc, "Adverts")
@@ -136,6 +141,7 @@ FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
         IF nVal == 1 THEN
             PRINT "\nNotifications have been enabled by client"
             ntfyEnabled=1
+            TimerStart(0,ONE_SECOND,0)
 
         ELSEIF nVal == 0 THEN 
             PRINT "\nNotifications been disabled by client"
@@ -205,16 +211,21 @@ sub once_a_second()
 endsub
 
 sub once_an_hour()
+    print "Hour!\n"
     IF ntfyEnabled == 1 THEN
         rc=BleCharValueNotify(hUuidC1,data$)
     ENDIF
 endsub
 
 sub once_a_day()
-    //check_if_there_was_a_ble_connection()
-
-    // Send data through lora
-    rc = LORAMACTxData(1, data$, 1)
+    elapsetime = GetTickSince(starttick)
+    print "Milliseconds since last connection:"; elapsetime; " Connection status:"; connected;"\n"
+    if elapsetime > HOURS_24 && connected == 0 then
+        // Send data through lora
+        print " There have been more than 24 hours since last connection.\n"
+        print " And we are not currently connected. will send through Lora\n"
+        rc = LORAMACTxData(PORT, data$, NO_CONFIRMATION)
+    endif
 endsub
 
 function HandlerTimer0() as integer
@@ -223,6 +234,7 @@ function HandlerTimer0() as integer
     if seconds == 6 then
         seconds = 0
         minutes = minutes + 1
+        print "hours = " ; hours; " minutes = "; minutes; " data:"; data$
         if minutes == 6 then
             minutes = 0
             once_an_hour()

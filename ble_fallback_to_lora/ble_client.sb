@@ -49,13 +49,8 @@ endsub
 dim rc
 dim looprc
 
-dim ok$,er$,pr$
-
 dim s$[NUM_OF_S_PARAMS]    // must be at least 8 elements for BleSvcRegDevInfo()
-dim urts                    //will be <0 if uart parser suspended
 
-dim handle
-dim conHndl
 dim sensorType
 
 dim PrevAds$[8] //Previous adverts (size of 8 adverts)
@@ -65,21 +60,9 @@ dim hc[NUM_OF_CONNS+1]      //contains connection handles
 dim conns                   //number of connections
 dim hcVsp                   //handle of connection to use for VSP service
 
-
 dim uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
 dim uHndl
 dim tempHVal
-
-//******************************************************************************
-// Initialise Global Variable
-//******************************************************************************
-
-ok$    = "\nOK"
-er$    = "\nERROR "
-pr$    = "\r\n>"
-
-urts=0 //not suspended
-handle=0
 
 //==============================================================================
 //release all connection handles
@@ -310,7 +293,7 @@ function HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) as integer
     case BLE_EVBLEMSGID_DISCONNECT
         hz = RelConnHandle(nCtx)
         conns = conns - 1
-        print "\n --- Disconnect: (";integer.h' nCtx;") handle=";hz;pr$
+        print "\n --- Disconnect: (";integer.h' nCtx;") handle=";hz;"\n"
 
     case BLE_EVBLEMSGID_DISPLAY_PASSKEY
         DbgMsgVal("Display Pairing Passkey ",nCtx)

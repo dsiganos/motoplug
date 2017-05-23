@@ -63,9 +63,9 @@ DIM elapsetime
 //******************************************************************************
 sub AssertResCode(rc,byval msg$ as string)
     if(rc!=0) then
-        print "\n";msg$;" failed with ";integer.h' rc
+        print "\n";msg$;" failed with ";integer.h' rc;"\n"
     else
-        print "\n";msg$;" OK"
+        print "\n";msg$;" OK\n"
     endif
 endsub
 
@@ -93,15 +93,15 @@ sub GattInit()
     rc = BleCharCommit(hSvc,attr1$,hUuidC1)
 
     PRINT "\nService UUID: "; INTEGER.H' hUuidS1
-    PRINT "\nChar UUID: "; INTEGER.H' hUuidC1	
+    PRINT "\nChar UUID: "; INTEGER.H' hUuidC1
 endsub
 
 //******************************************************************************
 // Handler definitions
 //******************************************************************************
 FUNCTION HndlrBlrAdvTimOut() 
-    PRINT "\nAdvert stopped via timeout"
-    PRINT "\nRestaring"
+    PRINT "Advert stopped via timeout\n"
+    PRINT "Restaring\n"
     rc = BleAdvertStart(0,addr$,25,0,0)
     AssertResCode(rc, "Adverts")
 ENDFUNC 1
@@ -112,11 +112,11 @@ FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER)
     SELECT nMsgId
     CASE 0
         connected = 1
-        PRINT "\nBLE Connection ";nCtx;"\n"
+        PRINT "BLE Connection\n";nCtx;"\n"
         starttick = GetTickCount()
     CASE 1
         connected = 0
-        PRINT "\nDisconnected ";nCtx;"\n"
+        PRINT "Disconnected";nCtx;"\n"
         rc = BleAdvertStart(0,addr$,25,0,0)
         AssertResCode(rc, "Adverts")
     CASE 5
@@ -126,7 +126,7 @@ FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER)
     CASE 16
         PRINT "\nConnected to a bonded master"
     CASE 17
-        PRINT "\nA new pairing has replaced the old key";   
+        PRINT "\nA new pairing has replaced the old key"
     CASE ELSE
         PRINT "\nUnknown Ble Msg"
     ENDSELECT

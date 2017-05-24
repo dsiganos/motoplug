@@ -44,7 +44,6 @@ DIM MaxConnInt : MaxConnInt = 1000000       //Maximum acceptable connection inte
 DIM ConnSupTO : ConnSupTO = 4000000        //Connection supervisory timeout is 4 seconds
 DIM sL : sL = 0
 DIM uuid$ : uuid$ = "569a0000b87f490c92cb11ba5ea5167c"	//Laird's base UUID
-DIM ntfyEnabled : ntfyEnabled = 0
 DIM connected : connected = 0 // This will show if there has been a connection
 DIM seconds : seconds = 0
 DIM minutes : minutes = 0
@@ -127,23 +126,6 @@ FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER)
     ENDSELECT
 ENDFUNC 1
 
-//*******************************************************************************
-// CCCD descriptor written handler
-//*******************************************************************************
-FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
-    DIM value$
-    IF charHandle==hUuidC1 THEN
-        IF nVal == 1 THEN
-            PRINT "\nNotifications have been enabled by client"
-            ntfyEnabled=1
-
-        ELSEIF nVal == 0 THEN 
-            PRINT "\nNotifications been disabled by client"
-            ntfyEnabled=0
-        ENDIF
-    ENDIF
-ENDFUNC 1
-
 FUNCTION count_integer_digits(number) As Integer
 // Receives a number and returns the number of digits
 // The number is expected to be an integer in decimal format.
@@ -200,32 +182,34 @@ FUNCTION Read_data()
     sprint_battery(battery)
 ENDFUNC 1
 
-sub once_a_second()
-    rc = Read_data()
-endsub
-
-sub once_an_hour()
-    IF ntfyEnabled == 1 THEN
-        rc=BleCharValueNotify(hUuidC1,data$)
+//*******************************************************************************
+// CCCD descriptor written handler
+//*******************************************************************************
+FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
+    DIM value$
+    IF charHandle==hUuidC1 THEN
+        IF nVal == 1 THEN
+            PRINT "Command to send data received\n"
+            rc = Read_data()
+            rc=BleCharValueNotify(hUuidC1,data$)
+        ELSEIF nVal == 0 THEN
+            PRINT "\nNotifications been disabled by client"
+        ENDIF
     ENDIF
-endsub
+ENDFUNC 1
 
 sub once_a_day()
-    //check_if_there_was_a_ble_connection()
-
     // Send data through lora
     rc = LORAMACTxData(1, data$, 1)
 endsub
 
 function HandlerTimer0() as integer
-    once_a_second()
     seconds = seconds + 1
     if seconds == 6 then
         seconds = 0
         minutes = minutes + 1
         if minutes == 6 then
             minutes = 0
-            once_an_hour()
             hours = hours + 1
             if hours == 2 then
                 hours = 0

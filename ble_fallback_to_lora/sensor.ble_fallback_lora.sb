@@ -171,7 +171,7 @@ SUB sprint_battery(battery)
     elseif (count_integer_digits(batterymod)==1) then
         SPRINT #Data$,integer.d' Batterydiv; ".00";batterymod; " V\n"
     else
-        SPRINT #Data$,integer.d' Batterydiv; batterymod; " V\n"
+        SPRINT #Data$,integer.d' Batterydiv; ".";batterymod; " V\n"
     endif
 ENDSUB
 

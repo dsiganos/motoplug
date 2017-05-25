@@ -183,19 +183,7 @@ FUNCTION Read_data()
 ENDFUNC 1
 
 //*******************************************************************************
-// CCCD descriptor written handler
 //*******************************************************************************
-FUNCTION HndlrCharCccd(BYVAL charHandle, BYVAL nVal) AS INTEGER
-    DIM value$
-    IF charHandle==hUuidC1 THEN
-        IF nVal == 1 THEN
-            PRINT "Command to send data received\n"
-            rc = Read_data()
-            rc=BleCharValueNotify(hUuidC1,data$)
-        ELSEIF nVal == 0 THEN
-            PRINT "\nNotifications been disabled by client"
-        ENDIF
-    ENDIF
 ENDFUNC 1
 
 sub once_a_day()
@@ -313,7 +301,6 @@ TimerStart(0,ONE_SECOND,0)
 ONEVENT  EVBLEMSG                   CALL HndlrBleMsg
 ONEVENT  EVBLE_ADV_TIMEOUT          CALL HndlrBlrAdvTimOut
 ONEVENT  EVTMR0                     CALL HandlerTimer0
-ONEVENT  EVCHARCCCD                 CALL HndlrCharCccd
 
 ONEVENT  EVLORAMACTXCOMPLETE        CALL HandlerLoRaTxComp
 ONEVENT  EVLORAMACRXCOMPLETE        CALL HandlerLoRaRxComp

@@ -189,6 +189,7 @@ FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER)
 ENDFUNC 1
 
 sub once_a_day()
+    rc = Read_data()
     // Send data through lora
     rc = LORAMACTxData(1, data$, 1)
 endsub

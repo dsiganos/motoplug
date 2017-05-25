@@ -158,6 +158,7 @@ FUNCTION Read_data()
 
     Battery = convert_bat_from_ADC_reading(ADC_reading)
     sprint_battery(battery)
+    rc = BleCharValueWrite(hUuidC1,data$)
 ENDFUNC 1
 
 //*******************************************************************************

@@ -9,6 +9,7 @@
 #include "lib/ble.sblib"
 
 #define ONE_SECOND 1000     // There are 1000 milliseconds in a second
+#define TEN_SECOND 10000    // There are 10000 milliseconds in a second
 #define OTAA 1              // Method of activation (Over The Air Activation)
 #define SPI_CS_PIN  4       //SIO4 is connected to the CS line
 #define NO_CONFIRMATION 0
@@ -103,29 +104,6 @@ FUNCTION HndlrBlrAdvTimOut()
     AssertResCode(rc, "Adverts")
 ENDFUNC 1
 
-//*******************************************************************************
-//*******************************************************************************
-FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER) 
-    SELECT nMsgId
-    CASE 0
-        PRINT "\nBLE Connection ";nCtx;"\n"
-    CASE 1
-        PRINT "\nDisconnected ";nCtx;"\n"
-        rc = BleAdvertStart(0,addr$,25,0,0)
-        AssertResCode(rc, "Adverts")
-    CASE 5
-        PRINT "\nThermometer CCD value has changed. New value is ";nCtx
-    CASE 18
-        PRINT "\nConnection ";nCtx;" is now encrypted"
-    CASE 16
-        PRINT "\nConnected to a bonded master"
-    CASE 17
-        PRINT "\nA new pairing has replaced the old key";   
-    CASE ELSE
-        PRINT "\nUnknown Ble Msg"
-    ENDSELECT
-ENDFUNC 1
-
 FUNCTION count_integer_digits(number) As Integer
 // Receives a number and returns the number of digits
 // The number is expected to be an integer in decimal format.
@@ -184,6 +162,29 @@ ENDFUNC 1
 
 //*******************************************************************************
 //*******************************************************************************
+FUNCTION HndlrBleMsg(BYVAL nMsgId AS INTEGER, BYVAL nCtx AS INTEGER)
+    dim str$
+    SELECT nMsgId
+    CASE 0
+        rc = Read_data()
+        PRINT "BLE Connection ";nCtx;"\n"
+        TimerStart(1,TEN_SECOND,0)
+
+    CASE 1
+        PRINT "Disconnected ";nCtx;"\n"
+        rc = BleAdvertStart(0,addr$,25,0,0)
+        AssertResCode(rc, "Adverts")
+    CASE 5
+        PRINT "Thermometer CCD value has changed. New value is ";nCtx; "\n"
+    CASE 18
+        PRINT "Connection ";nCtx;" is now encrypted\n"
+    CASE 16
+        PRINT "Connected to a bonded master\n"
+    CASE 17
+        PRINT "A new pairing has replaced the old key\n"
+    CASE ELSE
+        PRINT "Unknown Ble Msg\n"
+    ENDSELECT
 ENDFUNC 1
 
 sub once_a_day()
@@ -206,6 +207,12 @@ function HandlerTimer0() as integer
         endif
     endif
     TimerStart(0,ONE_SECOND,0)
+endfunc 1
+
+function HandlerTimer1() as integer
+    print "Ten second timer fired\n"
+    rc = Read_data()
+    TimerStart(1,TEN_SECOND,0)
 endfunc 1
 
 //==============================================================================
@@ -301,6 +308,7 @@ TimerStart(0,ONE_SECOND,0)
 ONEVENT  EVBLEMSG                   CALL HndlrBleMsg
 ONEVENT  EVBLE_ADV_TIMEOUT          CALL HndlrBlrAdvTimOut
 ONEVENT  EVTMR0                     CALL HandlerTimer0
+ONEVENT  EVTMR1                     CALL HandlerTimer1
 
 ONEVENT  EVLORAMACTXCOMPLETE        CALL HandlerLoRaTxComp
 ONEVENT  EVLORAMACRXCOMPLETE        CALL HandlerLoRaRxComp

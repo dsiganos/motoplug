@@ -1,0 +1,126 @@
+//With this script we measure the voltage from a power suply using a voltage divider 
+//We took maximun 16volts for power supply, we are turning it into under 1.2 volts with the votage divider to be able to 
+//insert it in rm186 and measure it. The voltage divider has (R1=13250ohm and R2=998Ohm) The nominal values are 13,3KOhm and 1KOhm
+
+#define ADC_PIN 6 
+
+dim rc
+dim extra_accuracy2: extra_accuracy2 = 2
+dim extra_accuracy: extra_accuracy = 100
+
+
+FUNCTION calc_digits(num)
+	dim p
+        dim x
+
+	x = 1
+	p = 10
+	while (num / p) && p < 1000000000
+    		x = x + 1
+    		p = p * 10
+    	endwhile
+ENDFUNC x
+
+sub print_zeroes(num)
+	while num > 0
+		print "0"
+		num = num - 1
+	endwhile
+endsub
+
+function step1()
+	dim x
+	x = GpioRead(ADC_PIN)
+	print "1: "; x; "\n"
+endfunc x
+
+//calculate the analog input to voltage input and print it
+function step2(num)
+	dim x
+	x = num * 120 * extra_accuracy / 1024
+	print "2: "; x; "\n"
+endfunc x
+
+// 14.2765 * 10000
+//calculate the voltage output and print it(proportionOfVoltage is different when we use different resitances )
+#define proportionOfVoltage 142765
+function step3(num)
+	dim x
+	x = proportionOfVoltage * num / 10000
+	print "3: "; x; "\n"
+endfunc x
+//we print the voltage in user friendly way with decimals 
+sub step4(num)
+	dim dec, fract, digits, zeroes
+	fract = num % 100 * extra_accuracy
+	digits = calc_digits(fract)
+	dec = num / 100 * extra_accuracy
+	zeroes = 2 + extra_accuracy2 - digits
+	print "4: "; dec; ","
+	print_zeroes(zeroes)
+	print fract
+	print "\n"
+if 0 then
+	print "\n"
+	print "dec="; dec; "\n"
+	print "fract="; fract; "\n"
+	print "digits="; digits; "\n"
+	print "zeroes="; zeroes; "\n"
+	print "\n\n"
+endif
+endsub
+//run this code every 3sec
+FUNCTION HandlerTimer0()
+        dim x
+	x = step1()
+	x = step2(x)
+	x = step3(x)	
+	step4(x)
+ENDFUNC 1            
+
+ONEVENT EVTMR0                      CALL HandlerTimer0
+rc = GpioSetFunc(ADC_PIN, 3, 0x11)
+
+
+if 0 then
+print calc_digits(0); "\n"
+print calc_digits(1); "\n"
+print calc_digits(10); "\n"
+print calc_digits(11); "\n"
+print calc_digits(100); "\n"
+print calc_digits(10000); "\n"
+print calc_digits(10000001); "\n"
+print "\n"
+print_zeroes(0)
+print "\n"
+print_zeroes(1)
+print "\n"
+print_zeroes(2)
+print "\n"
+print_zeroes(3)
+print "\n"
+print_zeroes(4)
+print "\n"
+print "\n"
+print "\n"
+step4(0)
+step4(1)
+step4(101)
+step4(1001)
+step4(1000)
+step4(1000003)
+endif
+
+if 0 then
+dim i
+
+while i < 1000000
+	step4(i)
+	i = i + 1
+endwhile
+endif
+
+rc = HandlerTimer0()
+timerstart(0, 3000, 1)
+
+WAITEVENT

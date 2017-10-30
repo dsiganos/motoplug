@@ -1,0 +1,30 @@
+//A simple advertisement 
+DIM rc   // Integer that stores return code from functions
+DIM advData$ // String used in construction of a BLE advert
+DIM advRpt$  // String that holds the advert report when fully constructed
+DIM scanRpt$ // String that defines the Scan response. As Scan is unused this will remain empty
+
+
+//I can pass data to (advData$ and to each 16bit UUID's)
+advData$="hello"
+
+rc = BleAdvRptInit(advRpt$, 0, 0, 0) // Not connectable
+rc = BleScanRptInit(scanRpt$)        // Init an empty string as the scan report
+
+
+ // Add service UUID to advert report
+rc = BleAdvRptAddUuid16(advRpt$, 0x6665, -1, -1, -1, -1, -1)  //I pass "ef" data
+
+ // Append the record to the report using the Service Data type 0x16
+rc = BleAdvRptAppendAD(advRpt$, 0x31, advData$) //I pass "hello" data
+
+
+ // Commit the constructed reports to the BLE subsystem
+rc = BleAdvRptsCommit(advRpt$, scanRpt$)
+
+DIM addr$ : addr$ = "" // Define an empty string for undirected advertising
+
+// Begin advertising.
+rc = BleAdvertStart(3, addr$, 200, 0, 0) // 3=ADV_NONCONN_IND, 200mS interval, 0 timeout
+
+waitevent
